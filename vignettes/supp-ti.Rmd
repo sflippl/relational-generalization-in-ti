@@ -1,0 +1,1462 @@
+---
+title: "Detailed analysis of TI behavior in DNNs"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Detailed analysis of TI behavior in DNNs}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+```{r setup}
+library(princti)
+library(tidyverse)
+library(patchwork)
+library(RColorBrewer)
+scaling_levels <- c(
+  'Lazy',
+  'Rich',
+  'Very rich'
+)
+scaling_palette <- c(
+  '#1e996fff',
+  '#e5c700ff',
+  '#cc9f28ff'
+)
+```
+
+## Fig. S2
+
+### Rank representability
+
+```{r}
+fig_rr <-
+  ti_scaling_rank_rep %>%
+  ggplot(aes(sqrt(scaling), rank_rep)) +
+  stat_summary(geom='line') +
+  stat_summary(geom='ribbon', alpha = 0.3, fun.ymin = function(x) {mean(x)-sd(x)}, fun.ymax = function(x) {mean(x)+sd(x)}) +
+  scale_x_continuous(
+    trans = scales::trans_new(
+      name = 'reverse_log10',
+      transform = function(x) {-log(x, base=10)},
+      inverse = function(x) {10**(-x)}
+    ),
+    breaks = c(1, 1e-16),
+    labels = c('1', parse(text='10^{-16}'))
+  ) +
+  scale_color_manual(values = scaling_palette, labels = scaling_levels, drop = FALSE) +
+  scale_y_continuous(n.breaks = 3) +
+  labs(x = 'Scale', y = 'Rank rep.') +
+  theme_princti() +
+  geom_hline(yintercept=0, linetype='dashed')
+fig_rr
+```
+
+
+### Time trajectory
+
+```{r}
+df_last <-
+  time_traj_ti %>%
+  group_by(model_seed, scaling) %>%
+  summarise(epoch = max(epoch)) %>%
+  inner_join(time_traj_ti)
+df_filled_out <-
+  expand.grid(
+  epoch = 1:300,
+  scaling = c('Lazy', 'Rich', 'Very rich'),
+  model_seed = 1:20,
+  j=0:6,
+  k=0:6
+) %>%
+  as_tibble() %>%
+  left_join(
+    time_traj_ti %>%
+      mutate(
+        scaling = case_when(
+          scaling == 1 ~ 'Lazy',
+          scaling == 1e-6 ~ 'Rich',
+          abs(log(scaling, base=10)+32)<0.01 ~ 'Very rich'
+        )
+      )
+  ) %>%
+  inner_join(
+    df_last %>%
+      mutate(
+        scaling = case_when(
+          scaling == 1 ~ 'Lazy',
+          scaling == 1e-6 ~ 'Rich',
+          abs(log(scaling, base=10)+32)<0.01 ~ 'Very rich'
+        )) %>%
+      select(-epoch) %>%
+      rename(last_margin = margin)
+  ) %>%
+  mutate(
+    margin = if_else(is.na(margin), last_margin, margin)
+  ) %>%
+  select(-last_margin) %>%
+  mutate(
+    split = if_else(abs(k-j) == 1, 'Train', 'Test') %>% factor(levels = c('Train', 'Test')),
+     scaling =
+      scaling %>%
+      factor(
+        levels = scaling_levels
+      )
+  ) %>%
+  filter(abs(k-j) > 0, epoch <= 322)
+fig_time_margin <-
+  df_filled_out %>%
+  group_by(epoch, model_seed, split, scaling) %>%
+  summarise(margin = mean(sign(k-j)*margin)) %>%
+  ggplot(aes(epoch, margin, linetype=split, color=scaling, group = paste(scaling, split))) +
+  geom_hline(yintercept=0, linetype='dashed') +
+  stat_summary(geom='line') +
+  stat_summary(geom='ribbon', alpha = 0.3, color=NA, show.legend=FALSE, fun.ymin = function(x) {mean(x)-sd(x)}, fun.ymax = function(x) {mean(x)+sd(x)}) +
+  scale_color_manual(values = scaling_palette, labels = scaling_levels, drop = FALSE) +
+  scale_y_continuous(n.breaks = 3) +
+  labs(x = 'Epoch', y = 'Margin', color=NULL, linetype=NULL) +
+  theme_princti() +
+  scale_color_manual(values = scaling_palette %>% magrittr::set_names(scaling_levels)) +
+  scale_x_continuous(n.breaks = 3)
+fig_time_margin
+```
+
+```{r}
+fig_time_acc <-
+  df_filled_out %>%
+  group_by(epoch, model_seed, scaling, split) %>%
+  summarise(margin = mean(sign(k-j)==sign(margin))) %>%
+  ggplot(aes(epoch, margin, linetype=split, color=scaling, group = paste(scaling, split))) +
+  geom_hline(yintercept=0.5, linetype='dashed') +
+  stat_summary(geom='line') +
+  stat_summary(geom='ribbon', alpha = 0.3, color=NA, show.legend=FALSE, fun.ymin = function(x) {mean(x)-sd(x)}, fun.ymax = function(x) {mean(x)+sd(x)}) +
+  scale_color_manual(values = scaling_palette, labels = scaling_levels, drop = FALSE) +
+  scale_y_continuous(n.breaks = 3) +
+  labs(x = 'Epoch', y = 'Accuracy', color=NULL, linetype=NULL) +
+  theme_princti() +
+  scale_x_continuous(n.breaks = 3)
+fig_time_acc
+```
+
+```{r}
+fig_time_rr <-
+  expand.grid(
+    epoch = seq(5, 300, 5),
+    scaling = c('Lazy', 'Rich', 'Very rich'),
+    model_seed = 1:20
+  ) %>%
+  as_tibble() %>%
+  left_join(
+    time_traj_ti_rank_rep %>%
+      mutate(
+        scaling = case_when(
+          scaling == 1 ~ 'Lazy',
+          scaling == 1e-6 ~ 'Rich',
+          abs(log(scaling, base=10)+32)<0.01 ~ 'Very rich'
+        )
+      )
+  ) %>%
+  inner_join(
+    time_traj_ti_rank_rep %>%
+      group_by(model_seed, scaling) %>%
+      summarise(epoch = max(epoch)) %>%
+      inner_join(time_traj_ti_rank_rep) %>%
+      mutate(
+        scaling = case_when(
+          scaling == 1 ~ 'Lazy',
+          scaling == 1e-6 ~ 'Rich',
+          abs(log(scaling, base=10)+32)<0.01 ~ 'Very rich'
+        )) %>%
+      select(-epoch) %>%
+      rename(last_rr = rank_rep)
+  ) %>%
+  mutate(
+    rank_rep = if_else(is.na(rank_rep), last_rr, rank_rep)
+  ) %>%
+  select(-last_rr) %>%
+  mutate(
+     scaling =
+      scaling %>%
+      factor(
+        levels = scaling_levels
+      )
+  ) %>%
+  ggplot(aes(epoch, rank_rep, color=scaling, group = scaling)) +
+  geom_hline(yintercept=0, linetype='dashed') +
+  stat_summary(geom='line') +
+  stat_summary(geom='ribbon', alpha = 0.3, color=NA, show.legend=FALSE, fun.ymin = function(x) {mean(x)-sd(x)}, fun.ymax = function(x) {mean(x)+sd(x)}) +
+  scale_color_manual(values = scaling_palette, labels = scaling_levels, drop = FALSE) +
+  scale_y_continuous(n.breaks = 3) +
+  labs(x = 'Epoch', y = 'Rank rep.', color=NULL, linetype=NULL) +
+  theme_princti() +
+  scale_color_manual(values = scaling_palette %>% magrittr::set_names(scaling_levels)) +
+  scale_x_continuous(n.breaks = 3)
+fig_time_rr
+```
+
+
+```{r}
+fig_time_gen <-
+  time_traj_ti %>%
+  filter(
+    j!=k,
+    epoch %in% c(100, 150, 165, 180, 200, 300),
+    abs(log(scaling, 10)+32)<=0.01
+  ) %>%
+  mutate(
+    margin = sign(k-j)*margin,
+    correct = if_else(margin > 0, 'yes', 'no'),
+    label = map2_chr(j, k, ~paste0(min(LETTERS[..1+1],LETTERS[..2+1]), max(LETTERS[..1+1], LETTERS[..2+1]))),
+    symbolic_distance = abs(k-j),
+    symbolic_distance = if_else(symbolic_distance==1, 'SD: 1', as.character(symbolic_distance)) %>%
+    factor(levels = c('SD: 1', as.character(2:6)))
+  ) %>%
+  ggplot(aes(label, margin, group=epoch, color=as.character(epoch))) +
+  geom_hline(yintercept = 0, linetype='dashed') +
+  stat_summary(mapping = aes(shape = correct), geom='point', show.legend = FALSE) +
+  stat_summary(geom='ribbon', alpha=0.3, color=NA, fill='grey80', show.legend=FALSE, fun.ymin = function(x) {mean(x)-sd(x)}, fun.ymax = function(x) {mean(x)+sd(x)}) +
+  stat_summary(geom='line', show.legend = TRUE) +
+  facet_grid(~symbolic_distance, scales='free_x', space='free', switch = 'x') +
+  theme_princti() +
+  labs(x = 'Item pair', y = 'Margin', color = 'Time', linetype = NULL) +
+  scale_y_continuous(n.breaks=3) +
+  scale_shape_manual(values = c(yes = 16, no = 1), breaks=NULL) +
+  scale_x_discrete(labels=c()) +
+  theme(
+    strip.placement = 'outside'
+  ) +
+  scale_color_manual(values = brewer.pal(n = 9, "Greys")[4:9])
+fig_time_gen
+```
+
+```{r}
+fig_s2 <-
+  (((
+    fig_rr +
+      fig_time_margin +
+      fig_time_acc +
+      fig_time_rr +
+      plot_layout(guides='collect')
+   ) |
+      fig_time_gen)
+   +
+  plot_layout(widths = c(2, 2.5)) +
+    plot_annotation(tag_levels='a')) &
+  theme(
+    plot.margin = unit(c(0,0,0,0), 'pt'),
+    legend.key.size = unit(8, 'pt'),
+    legend.box.margin = unit(c(0,0,0,0), 'pt'),
+    legend.box.spacing=unit(0, 'pt')
+  )
+frac <- 0.95
+width <- 15.11078
+fig_s2
+ggsave('../figures/supp-ti/fig-s2-raw.pdf', width=frac*width, height=3/7*frac*width, units = "cm")
+```
+
+## Fig. S3: Hidden dimensions
+
+```{r}
+alpha_ntk <- get_alphas(1,1,0)[[2]]
+fig_s3_ind <-
+  hdims_ti %>%
+  mutate(theory = gd_margin(j+1, k+1, alpha = alpha_ntk)) %>%
+  group_by(scaling, hdims) %>%
+  summarise(pred_error=mean((theory-margin)**2)) %>%
+  ggplot(aes(hdims, y=pred_error, color=factor(scaling))) +
+  scale_x_log10(breaks = c(100, 10000), labels=c('100', '10,000')) +
+  geom_line() +
+  scale_color_manual(values = scaling_palette[1:2], breaks = c(1, 1e-6), labels = c('Lazy', 'Rich')) +
+  geom_point(show.legend=FALSE) +
+  theme_princti() +
+  labs(x = '# hidden units', y = 'Pred. error\nof ind. model', color = NULL)
+fig_s3_ind
+```
+
+```{r}
+fig_s3_avg <-
+  hdims_ti %>%
+  group_by(scaling, hdims, j, k) %>%
+  summarise(margin = mean(margin)) %>%
+  mutate(theory = gd_margin(j+1, k+1, alpha = alpha_ntk)) %>%
+  group_by(scaling, hdims) %>%
+  summarise(pred_error=mean((theory-margin)**2)) %>%
+  ggplot(aes(hdims, y=pred_error, color=factor(scaling))) +
+  scale_x_log10(breaks = c(100, 10000), labels=c('100', '10,000')) +
+  geom_line() +
+  scale_color_manual(values = scaling_palette[1:2], breaks = c(1, 1e-6), labels = c('Lazy', 'Rich')) +
+  geom_point(show.legend=FALSE) +
+  theme_princti() +
+  labs(x = '# hidden units', y = 'Pred. error\nof avg. model', color = NULL)
+fig_s3_avg
+```
+
+```{r}
+fig_s3_rr <-
+  hdims_ti_rank_rep %>%
+  ggplot(aes(hdims, rank_rep, color=factor(scaling))) +
+  stat_summary(geom='line') +
+  stat_summary(geom='point', show.legend=FALSE) +
+  scale_x_log10(breaks = c(100, 10000), labels=c('100', '10,000')) +
+  scale_color_manual(values = scaling_palette[1:2], breaks = c(1, 1e-6), labels = c('Lazy', 'Rich')) +
+  theme_princti() +
+  labs(x = '# hidden units', y = 'Rank rep.', color = NULL)
+fig_s3_rr
+```
+
+```{r}
+fig_s3_gen <-
+  hdims_ti %>%
+  filter(j!=k) %>%
+  mutate(
+    margin = sign(k-j)*margin,
+    correct = if_else(margin > 0, 'yes', 'no'),
+    label = map2_chr(j, k, ~paste0(min(LETTERS[..1+1],LETTERS[..2+1]), max(LETTERS[..1+1], LETTERS[..2+1]))),
+    symbolic_distance = abs(k-j),
+    symbolic_distance = if_else(symbolic_distance==1, 'SD: 1', as.character(symbolic_distance)) %>%
+    factor(levels = c('SD: 1', as.character(2:6)))
+  ) %>%
+  ggplot(aes(label, margin, group=hdims, color=factor(hdims))) +
+  geom_hline(yintercept = 0, linetype='dashed') +
+  stat_summary(geom='point', show.legend = FALSE) +
+  stat_summary(geom='ribbon', alpha=0.3, color=NA, fill='grey80', show.legend=FALSE) +
+  stat_summary(geom='line', show.legend = TRUE) +
+  facet_grid(~factor(scaling, levels=c(1, 1e-6))+symbolic_distance, scales='free_x', space='free', switch = 'x') +
+  theme_princti() +
+  labs(x = 'Item pair', y = 'Margin', color = '# hidden units', linetype = NULL) +
+  scale_y_continuous(n.breaks=3) +
+  scale_x_discrete(labels=c()) +
+  theme(
+    strip.placement = 'outside'
+  ) +
+  scale_color_manual(values=brewer.pal(8, 'Blues')[5:8], labels = c('100', '1,000', '10,000', '50,000'))
+fig_s3_gen
+```
+
+```{r}
+fig_s3_1 <-
+  fig_s3_ind + fig_s3_avg + fig_s3_rr +
+  plot_layout(design='123', guides='collect')
+fig_s3 <-
+  (fig_s3_1 / fig_s3_gen) +
+  plot_layout(heights = c(1, 2)) +
+  plot_annotation(tag_levels = 'a')
+fig_s3 <-
+  fig_s3 &
+  theme(
+    plot.margin = unit(c(0,0,0,0), 'pt'),
+    legend.key.size = unit(8, 'pt'),
+    legend.box.margin = unit(c(0,0,0,0), 'pt'),
+    legend.box.spacing=unit(0, 'pt')
+  )
+frac <- 0.95
+width <- 15.11078
+fig_s3
+ggsave('../figures/supp-ti/fig-s3-raw.pdf', width=frac*width, height=4.5/7*frac*width, units = "cm")
+```
+
+
+## Fig. S4
+
+```{r}
+fig_rho_margin <-
+  nonlinearity_ti %>%
+  filter(abs(k-j) > 1) %>%
+  group_by(rho, model_seed) %>%
+  summarise(margin = mean(sign(k-j)*margin)) %>%
+  ggplot(aes(rho, margin)) +
+  geom_hline(yintercept=0, linetype='dashed') +
+  stat_summary(geom='line') +
+  stat_summary(geom='ribbon', alpha = 0.3, fun.ymin = function(x) {mean(x)-sd(x)}, fun.ymax = function(x) {mean(x)+sd(x)}) +
+  scale_color_manual(values = scaling_palette, labels = scaling_levels, drop = FALSE) +
+  scale_y_continuous(n.breaks = 3) +
+  labs(x = parse(text='rho'), y = 'Test margin') +
+  theme_princti() +
+  scale_x_continuous(limits=c(0, 2), n.breaks = 3)
+fig_rho_margin
+```
+
+```{r}
+fig_rho_acc <-
+  nonlinearity_ti %>%
+  filter(abs(k-j) > 1) %>%
+  group_by(rho, model_seed) %>%
+  summarise(margin = mean(sign(k-j)==sign(margin))) %>%
+  ggplot(aes(rho, margin)) +
+  geom_hline(yintercept=0.5, linetype='dashed') +
+  stat_summary(geom='line') +
+  stat_summary(geom='ribbon', alpha = 0.3, fun.ymin = function(x) {mean(x)-sd(x)}, fun.ymax = function(x) {mean(x)+sd(x)}) +
+  scale_color_manual(values = scaling_palette, labels = scaling_levels, drop = FALSE) +
+  scale_y_continuous(n.breaks = 3) +
+  labs(x = parse(text='rho'), y = 'Test acc.') +
+  theme_princti() +
+  scale_x_continuous(limits=c(0, 2), n.breaks = 3)
+fig_rho_acc
+```
+
+```{r}
+fig_rho_rr <-
+  nonlinearity_ti_rank_rep %>%
+  ggplot(aes(rho, rank_rep)) +
+  geom_hline(yintercept=0., linetype='dashed') +
+  stat_summary(geom='line') +
+  stat_summary(geom='ribbon', alpha = 0.3, fun.ymin = function(x) {mean(x)-sd(x)}, fun.ymax = function(x) {mean(x)+sd(x)}) +
+  scale_color_manual(values = scaling_palette, labels = scaling_levels, drop = FALSE) +
+  scale_y_continuous(n.breaks = 3) +
+  labs(x = parse(text='rho'), y = 'Rank rep.') +
+  theme_princti() +
+  scale_x_continuous(limits=c(0, 2), n.breaks = 3)
+fig_rho_rr
+```
+
+```{r}
+fig_tanh_margin <-
+  bind_rows(
+  tanh_ti %>%
+    mutate(nonlinearity = if_else(
+      scaling == 1e-6,
+      'tanh (sigma==10^{-6})',
+      'tanh (sigma==10^{-22})'
+    )),
+  nonlinearity_ti %>%
+    filter(rho == 1) %>%
+    mutate(nonlinearity = 'rho==1')
+) %>%
+  filter(abs(k-j) > 1) %>%
+  mutate(
+    nonlinearity_color = nonlinearity  %>%
+      factor(levels = c(paste0('rho==', c(0.5, 1, 1.5, 2)), 'tanh (sigma==10^{-6})', 'tanh (sigma==10^{-22})'))
+  ) %>%
+  group_by(nonlinearity, model_seed, nonlinearity_color) %>%
+  summarise(margin = mean(sign(k-j)*margin)) %>%
+  ggplot(aes(nonlinearity_color, margin, fill=nonlinearity_color)) +
+  geom_hline(yintercept=0, linetype='dashed') +
+  stat_summary(geom='col', show.legend=FALSE) +
+  stat_summary(geom='linerange', fun.ymin = function(x) {mean(x)-sd(x)}, fun.ymax = function(x) {mean(x)+sd(x)}) +
+  theme_princti() +
+  labs(x = NULL, y = 'Test margin') +
+  scale_y_continuous(n.breaks = 3) +
+  scale_x_discrete(breaks = c()) +
+  scale_fill_brewer(palette = 'Dark2', labels = scales::parse_format(), drop=FALSE)
+fig_tanh_margin
+```
+
+```{r}
+fig_tanh_acc <-
+  bind_rows(
+  tanh_ti %>%
+    mutate(nonlinearity = if_else(
+      scaling == 1e-6,
+      'tanh (sigma==10^{-6})',
+      'tanh (sigma==10^{-22})'
+    )),
+  nonlinearity_ti %>%
+    filter(rho == 1) %>%
+    mutate(nonlinearity = 'rho==1')
+) %>%
+  filter(abs(k-j) > 1) %>%
+  mutate(
+    nonlinearity_color = nonlinearity  %>%
+      factor(levels = c(paste0('rho==', c(0.5, 1, 1.5, 2)), 'tanh (sigma==10^{-6})', 'tanh (sigma==10^{-22})'))
+  ) %>%
+  group_by(nonlinearity, model_seed, nonlinearity_color) %>%
+  summarise(margin = mean(sign(k-j)==sign(margin))) %>%
+  ggplot(aes(nonlinearity_color, margin, fill=nonlinearity_color)) +
+  geom_hline(yintercept=0.5, linetype='dashed') +
+  stat_summary(geom='col', show.legend=FALSE) +
+  stat_summary(geom='linerange', fun.ymin = function(x) {mean(x)-sd(x)}, fun.ymax = function(x) {mean(x)+sd(x)}) +
+  theme_princti() +
+  labs(x = NULL, y = 'Test acc.') +
+  scale_y_continuous(n.breaks = 3) +
+  scale_x_discrete(breaks = c()) +
+  scale_fill_brewer(palette = 'Dark2', labels = scales::parse_format(), drop=FALSE)
+fig_tanh_acc
+```
+
+```{r}
+fig_tanh_rr <-
+  bind_rows(
+  tanh_ti_rank_rep %>%
+    mutate(nonlinearity = if_else(
+      scaling == 1e-6,
+      'tanh (sigma==10^{-6})',
+      'tanh (sigma==10^{-22})'
+    )),
+  nonlinearity_ti_rank_rep %>%
+    filter(rho == 1) %>%
+    mutate(nonlinearity = 'rho==1')
+) %>%
+  mutate(
+    nonlinearity_color = nonlinearity  %>%
+      factor(levels = c(paste0('rho==', c(0.5, 1, 1.5, 2)), 'tanh (sigma==10^{-6})', 'tanh (sigma==10^{-22})'))
+  ) %>%
+  ggplot(aes(nonlinearity_color, rank_rep, fill=nonlinearity_color)) +
+  geom_hline(yintercept=0, linetype='dashed') +
+  stat_summary(geom='col', show.legend=FALSE) +
+  stat_summary(geom='linerange', fun.ymin = function(x) {mean(x)-sd(x)}, fun.ymax = function(x) {mean(x)+sd(x)}) +
+  theme_princti() +
+  labs(x = NULL, y = 'Rank rep.') +
+  scale_y_continuous(n.breaks = 3) +
+  scale_x_discrete(breaks = c()) +
+  scale_fill_brewer(palette = 'Dark2', labels = scales::parse_format(), drop=FALSE)
+fig_tanh_rr
+```
+
+
+```{r}
+fig_rho_gen <-
+  bind_rows(
+    nonlinearity_ti %>%
+      filter(
+        j!=k,
+        rho %in% c(0.5, 1, 1.5, 2)
+      ) %>%
+      mutate(
+        nonlinearity = paste0('rho==', rho)
+      ),
+    tanh_ti %>%
+      filter(j!=k) %>%
+      mutate(
+        nonlinearity = if_else(
+          scaling == 1e-6,
+          'tanh (sigma==10^{-6})',
+          'tanh (sigma==10^{-22})'
+        )
+      )
+  ) %>%
+  mutate(
+    margin = sign(k-j)*margin,
+    correct = if_else(margin > 0, 'yes', 'no'),
+    label = map2_chr(j, k, ~paste0(min(LETTERS[..1+1],LETTERS[..2+1]), max(LETTERS[..1+1], LETTERS[..2+1]))),
+    symbolic_distance = abs(k-j),
+    symbolic_distance = if_else(symbolic_distance==1, 'SD: 1', as.character(symbolic_distance)) %>%
+    factor(levels = c('SD: 1', as.character(2:6))),
+    nonlinearity = nonlinearity %>%
+      factor(levels = c(paste0('rho==', c(0.5, 1, 1.5, 2)), 'tanh (sigma==10^{-6})', 'tanh (sigma==10^{-22})'))
+  ) %>%
+  ggplot(aes(label, margin, group=nonlinearity, color=nonlinearity)) +
+  geom_hline(yintercept = 0, linetype='dashed') +
+  stat_summary(mapping = aes(shape = correct), geom='point', show.legend = FALSE) +
+  stat_summary(geom='ribbon', alpha=0.3, color=NA, fill='grey80', show.legend=FALSE, fun.ymin = function(x) {mean(x)-sd(x)}, fun.ymax = function(x) {mean(x)+sd(x)}) +
+  stat_summary(geom='line', show.legend = TRUE) +
+  facet_grid(~symbolic_distance, scales='free_x', space='free', switch = 'x') +
+  theme_princti() +
+  labs(x = 'Item pair', y = 'Margin', color = 'Activation\nfunction', linetype = NULL) +
+  scale_y_continuous(n.breaks=3) +
+  scale_shape_manual(values = c(yes = 16, no = 1), breaks=NULL) +
+  scale_x_discrete(labels=c()) +
+  theme(
+    strip.placement = 'outside'
+  ) +
+  scale_color_brewer(palette='Dark2', labels = scales::parse_format())
+fig_rho_gen
+```
+
+```{r}
+fig_s4 <-
+  (
+    fig_rho_margin + fig_rho_acc + fig_rho_rr + fig_tanh_margin + fig_tanh_acc + fig_tanh_rr +
+      fig_rho_gen
+   +
+  plot_layout(
+    design = '12227\n34567',
+    widths = c(4.5, 1, 1, 1, 11)
+  ) +
+    plot_annotation(tag_levels='a')) &
+  theme(
+    plot.margin = unit(c(0,0,0,0), 'pt'),
+    legend.key.size = unit(8, 'pt'),
+    legend.box.margin = unit(c(0,0,0,0), 'pt'),
+    legend.box.spacing=unit(0, 'pt')
+  )
+frac <- 0.95
+width <- 15.11078
+fig_s4
+ggsave('../figures/supp-ti/fig-s4-raw.pdf', width=frac*width, height=3/7*frac*width, units = "cm")
+```
+
+
+## Fig. S5: Number of items
+
+```{r}
+fig_n_margin <-
+  n_ti %>%
+  filter(abs(k-j) > 1) %>%
+  rename(n_items = n) %>%
+  group_by(n_items, model_seed) %>%
+  summarise(margin = mean(sign(k-j)*margin)) %>%
+  ggplot(aes(n_items, margin)) +
+  geom_hline(yintercept=0, linetype='dashed') +
+  stat_summary(geom='line') +
+  stat_summary(geom='ribbon', alpha = 0.3, fun.ymin = function(x) {mean(x)-sd(x)}, fun.ymax = function(x) {mean(x)+sd(x)}) +
+  scale_color_manual(values = scaling_palette, labels = scaling_levels, drop = FALSE) +
+  scale_y_continuous(n.breaks = 3) +
+  labs(x = '# Items', y = 'Test margin') +
+  theme_princti() +
+  scale_x_continuous(n.breaks = 3)
+fig_n_margin
+```
+
+```{r}
+fig_n_acc <-
+  n_ti %>%
+  filter(abs(k-j) > 1) %>%
+  rename(n_items = n) %>%
+  group_by(n_items, model_seed) %>%
+  summarise(margin = mean(sign(k-j)==sign(margin))) %>%
+  ggplot(aes(n_items, margin)) +
+  geom_hline(yintercept=0.5, linetype='dashed') +
+  stat_summary(geom='line') +
+  stat_summary(geom='ribbon', alpha = 0.3, fun.ymin = function(x) {mean(x)-sd(x)}, fun.ymax = function(x) {mean(x)+sd(x)}) +
+  scale_color_manual(values = scaling_palette, labels = scaling_levels, drop = FALSE) +
+  scale_y_continuous(n.breaks = 3) +
+  labs(x = '# Items', y = 'Test acc.') +
+  theme_princti() +
+  scale_x_continuous(n.breaks = 3)
+fig_n_acc
+```
+
+```{r}
+fig_n_rr <-
+  n_ti_rank_rep %>%
+  rename(n_items = n) %>%
+  ggplot(aes(n_items, rank_rep)) +
+  geom_hline(yintercept=0., linetype='dashed') +
+  stat_summary(geom='line') +
+  stat_summary(geom='ribbon', alpha = 0.3, fun.ymin = function(x) {mean(x)-sd(x)}, fun.ymax = function(x) {mean(x)+sd(x)}) +
+  scale_color_manual(values = scaling_palette, labels = scaling_levels, drop = FALSE) +
+  scale_y_continuous(n.breaks = 3) +
+  labs(x = '# Items', y = 'Rank rep.') +
+  theme_princti() +
+  scale_x_continuous(n.breaks = 3)
+fig_n_rr
+```
+
+```{r}
+fig_sd <-
+  n_ti %>%
+  mutate(symbolic_distance = abs(k-j)) %>%
+  group_by(n, model_seed, symbolic_distance) %>%
+  summarise(
+    margin = mean(sign(k-j)*margin)
+  ) %>%
+  ggplot(aes(symbolic_distance/(n-1), margin, color=n, group=n)) +
+  stat_summary(geom='ribbon', alpha=0.3, color=NA, fill='grey80', show.legend=FALSE, fun.ymin = function(x) {mean(x)-sd(x)}, fun.ymax = function(x) {mean(x)+sd(x)}) +
+  stat_summary(geom='line', show.legend = TRUE) +
+  scale_color_viridis_c(n.breaks = 3) +
+  labs(x = 'SD (normalized)', y = 'Test margin', color = '# Items') +
+  theme_princti() +
+  scale_x_continuous(n.breaks=3)
+fig_sd
+```
+
+
+```{r}
+fig_n_margins <-
+  n_ti %>%
+  filter(n == 15, j!=k) %>%
+  mutate(
+    margin = sign(k-j)*margin,
+    correct = if_else(margin > 0, 'yes', 'no'),
+    label = map2_chr(j, k, ~paste0(min(LETTERS[..1+1],LETTERS[..2+1]), max(LETTERS[..1+1], LETTERS[..2+1]))),
+    symbolic_distance = abs(k-j),
+    symbolic_distance = if_else(symbolic_distance==1, 'SD: 1', as.character(symbolic_distance)) %>%
+    factor(levels = c('SD: 1', as.character(2:15)))
+  ) %>%
+  ggplot(aes(label, margin, group=paste(symbolic_distance))) +
+  geom_hline(yintercept = 0, linetype='dashed') +
+  stat_summary(geom='point', show.legend = FALSE, shape=20) +
+  stat_summary(geom='ribbon', alpha=0.3, color=NA, fill='grey80', show.legend=FALSE, fun.ymin = function(x) {mean(x)-sd(x)}, fun.ymax = function(x) {mean(x)+sd(x)}) +
+  stat_summary(geom='line', show.legend = TRUE) +
+  facet_grid(~symbolic_distance, scales='free_x', space='free', switch = 'x') +
+  theme_princti() +
+  labs(x = 'Item pair', y = 'Margin') +
+  scale_y_continuous(n.breaks=3) +
+  scale_shape_manual(values = c(yes = 16, no = 1), breaks=NULL) +
+  scale_x_discrete(labels=c()) +
+  theme(
+    strip.placement = 'outside'
+  )
+fig_n_margins
+```
+
+```{r}
+fig_s5 <-
+  (
+    fig_n_margin +
+      fig_n_acc +
+      fig_n_rr +
+      fig_sd +
+      fig_n_margins
+   +
+  plot_layout(
+    design = '1234\n5555',
+    widths = c(1, 1, 1, 1.5),
+    heights = c(1, 2)
+  ) +
+    plot_annotation(tag_levels='a')) &
+  theme(
+    plot.margin = unit(c(0,0,0,0), 'pt'),
+    legend.key.size = unit(8, 'pt'),
+    legend.box.margin = unit(c(0,0,0,0), 'pt'),
+    legend.box.spacing=unit(0, 'pt')
+  )
+frac <- 0.95
+width <- 15.11078
+fig_s5
+ggsave('../figures/supp-ti/fig-s5-raw.pdf', width=frac*width, height=4.5/7*frac*width, units = "cm")
+```
+
+## Fig. S6: Effect of depth and crossentropy
+
+```{r}
+fig_depth_margin <-
+  depth_ti %>%
+  filter(abs(k-j) > 1) %>%
+  group_by(depth, model_seed) %>%
+  summarise(margin = mean(sign(k-j)*margin)) %>%
+  ggplot(aes(depth, margin)) +
+  geom_hline(yintercept=0, linetype='dashed') +
+  stat_summary(geom='line') +
+  stat_summary(geom='ribbon', alpha = 0.3, fun.ymin = function(x) {mean(x)-sd(x)}, fun.ymax = function(x) {mean(x)+sd(x)}) +
+  scale_color_manual(values = scaling_palette, labels = scaling_levels, drop = FALSE) +
+  scale_y_continuous(n.breaks = 3) +
+  labs(x = 'Depth', y = 'Test margin') +
+  theme_princti() +
+  scale_x_continuous(n.breaks = 3)
+fig_depth_margin
+```
+
+```{r}
+fig_depth_acc <-
+  depth_ti %>%
+  filter(abs(k-j) > 1) %>%
+  group_by(depth, model_seed) %>%
+  summarise(margin = mean(sign(k-j)==sign(margin))) %>%
+  ggplot(aes(depth, margin)) +
+  geom_hline(yintercept=0.5, linetype='dashed') +
+  stat_summary(geom='line') +
+  stat_summary(geom='ribbon', alpha = 0.3, fun.ymin = function(x) {mean(x)-sd(x)}, fun.ymax = function(x) {mean(x)+sd(x)}) +
+  scale_color_manual(values = scaling_palette, labels = scaling_levels, drop = FALSE) +
+  scale_y_continuous(n.breaks = 3) +
+  labs(x = 'Depth', y = 'Test acc.') +
+  theme_princti() +
+  scale_x_continuous(n.breaks = 3)
+fig_depth_acc
+```
+
+```{r}
+fig_depth_margin <-
+  depth_ti_rank_rep %>%
+  ggplot(aes(depth, rank_rep)) +
+  geom_hline(yintercept=0, linetype='dashed') +
+  stat_summary(geom='line') +
+  stat_summary(geom='ribbon', alpha = 0.3, fun.ymin = function(x) {mean(x)-sd(x)}, fun.ymax = function(x) {mean(x)+sd(x)}) +
+  scale_color_manual(values = scaling_palette, labels = scaling_levels, drop = FALSE) +
+  scale_y_continuous(n.breaks = 3) +
+  labs(x = 'Depth', y = 'Rank rep.') +
+  theme_princti() +
+  scale_x_continuous(n.breaks = 3)
+fig_depth_margin
+```
+
+```{r}
+fig_depth_gen <-
+  depth_ti %>%
+  filter(
+    j!=k
+  ) %>%
+  mutate(
+    margin = sign(k-j)*margin,
+    correct = if_else(margin > 0, 'yes', 'no'),
+    label = map2_chr(j, k, ~paste0(min(LETTERS[..1+1],LETTERS[..2+1]), max(LETTERS[..1+1], LETTERS[..2+1]))),
+    symbolic_distance = abs(k-j),
+    symbolic_distance = if_else(symbolic_distance==1, 'SD: 1', as.character(symbolic_distance)) %>%
+    factor(levels = c('SD: 1', as.character(2:6)))
+  ) %>%
+  ggplot(aes(label, margin, group=depth, color=as.character(depth))) +
+  geom_hline(yintercept = 0, linetype='dashed') +
+  stat_summary(geom='point', show.legend = FALSE) +
+  stat_summary(geom='ribbon', alpha=0.3, color=NA, fill='grey80', show.legend=FALSE, fun.ymin = function(x) {mean(x)-sd(x)}, fun.ymax = function(x) {mean(x)+sd(x)}) +
+  stat_summary(geom='line', show.legend = TRUE) +
+  facet_grid(~symbolic_distance, scales='free_x', space='free', switch = 'x') +
+  theme_princti() +
+  labs(x = 'Item pair', y = 'Margin', color = 'Depth', linetype = NULL) +
+  scale_y_continuous(n.breaks=3) +
+  scale_shape_manual(values = c(yes = 16, no = 1), breaks=NULL) +
+  scale_x_discrete(labels=c()) +
+  theme(
+    strip.placement = 'outside'
+  ) +
+  scico::scale_color_scico_d(palette = 'imola', end=0.7)
+fig_depth_gen
+```
+
+```{r}
+fig_ce_1 <-
+  crossentropy_ti %>%
+  filter(
+    j!=k, (epoch %in% c(0, 9)) | (epoch >= 99)
+  ) %>%
+  mutate(
+    margin = sign(k-j)*margin,
+    correct = if_else(margin > 0, 'yes', 'no'),
+    label = map2_chr(j, k, ~paste0(min(LETTERS[..1+1],LETTERS[..2+1]), max(LETTERS[..1+1], LETTERS[..2+1]))),
+    symbolic_distance = abs(k-j),
+    symbolic_distance = if_else(symbolic_distance==1, 'SD: 1', as.character(symbolic_distance)) %>%
+    factor(levels = c('SD: 1', as.character(2:6))),
+    scaling = factor(scaling),
+    mode = if_else(mode == 'backprop', 'Backpropagation', 'Linear readout')
+  ) %>%
+  ggplot(aes(label, margin, group=epoch, alpha=epoch+1, color=scaling)) +
+  geom_hline(yintercept = 0, linetype='dashed') +
+  stat_summary(geom='point', show.legend = FALSE) +
+  stat_summary(geom='ribbon', alpha=0.3, color=NA, fill='grey80', show.legend=FALSE, fun.ymin = function(x) {mean(x)-sd(x)}, fun.ymax = function(x) {mean(x)+sd(x)}) +
+  stat_summary(geom='line', show.legend = TRUE) +
+  facet_grid(mode~scaling+symbolic_distance, scales='free_x', space='free', switch = 'both') +
+  theme_princti() +
+  labs(x = 'Item pair', y = 'Margin', color='Init. scaling', alpha = 'Epoch') +
+  scale_y_continuous(n.breaks=3) +
+  scale_shape_manual(values = c(yes = 16, no = 1), breaks=NULL) +
+  scale_x_discrete(labels=c()) +
+  theme(
+    strip.placement = 'outside'
+  ) +
+  scale_alpha_continuous(trans='log10', breaks=c(1, 1e3, 1e6), labels = scales::parse_format()(c('1', '10^{3}', '10^{6}'))) +
+  scale_color_manual(values = scaling_palette[2:1] %>% magrittr::set_names(c(1e-6, 1.)), breaks = c(1e-6, 1.), labels = scales::parse_format()(c('10^{-3}', '1')))
+fig_ce_1
+```
+
+```{r}
+fig_ce_2 <-
+  crossentropy_ti %>%
+  filter(
+    j!=k, (epoch %in% c(0, 9)) | (epoch >= 99)
+  ) %>%
+  mutate(
+    margin = sign(k-j)*normalized_margin,
+    correct = if_else(margin > 0, 'yes', 'no'),
+    label = map2_chr(j, k, ~paste0(min(LETTERS[..1+1],LETTERS[..2+1]), max(LETTERS[..1+1], LETTERS[..2+1]))),
+    symbolic_distance = abs(k-j),
+    symbolic_distance = if_else(symbolic_distance==1, 'SD: 1', as.character(symbolic_distance)) %>%
+    factor(levels = c('SD: 1', as.character(2:6))),
+    scaling = factor(scaling),
+    mode = if_else(mode == 'backprop', 'Backpropagation', 'Linear readout')
+  ) %>%
+  ggplot(aes(label, margin, group=epoch, alpha=epoch+1, color=scaling)) +
+  geom_hline(yintercept = 0, linetype='dashed') +
+  stat_summary(geom='point', show.legend = FALSE) +
+  stat_summary(geom='ribbon', alpha=0.3, color=NA, fill='grey80', show.legend=FALSE, fun.ymin = function(x) {mean(x)-sd(x)}, fun.ymax = function(x) {mean(x)+sd(x)}) +
+  stat_summary(geom='line', show.legend = TRUE) +
+  facet_grid(mode~scaling+symbolic_distance, scales='free_x', space='free', switch = 'both') +
+  theme_princti() +
+  labs(x = 'Item pair', y = 'Margin', color='Init. scaling', alpha = 'Epoch') +
+  scale_y_continuous(n.breaks=3) +
+  scale_shape_manual(values = c(yes = 16, no = 1), breaks=NULL) +
+  scale_x_discrete(labels=c()) +
+  theme(
+    strip.placement = 'outside'
+  ) +
+  scale_alpha_continuous(trans='log10', breaks=c(1, 1e3, 1e6), labels = scales::parse_format()(c('1', '10^{3}', '10^{6}'))) +
+  scale_color_manual(values = scaling_palette[2:1] %>% magrittr::set_names(c(1e-6, 1.)), breaks = c(1e-6, 1.), labels = scales::parse_format()(c('10^{-3}', '1')))
+fig_ce_2
+```
+
+```{r}
+alpha_ntk <- get_alphas(1,1,0)[[2]]
+fig_ce_3 <-
+  crossentropy_ti %>%
+  filter(
+    abs(k-j)>1
+  ) %>%
+  mutate(
+    margin = sign(k-j)*normalized_margin,
+    correct = if_else(margin > 0, 'yes', 'no'),
+    label = map2_chr(j, k, ~paste0(min(LETTERS[..1+1],LETTERS[..2+1]), max(LETTERS[..1+1], LETTERS[..2+1]))),
+    symbolic_distance = abs(k-j),
+    symbolic_distance = if_else(symbolic_distance==1, 'SD: 1', as.character(symbolic_distance)) %>%
+    factor(levels = c('SD: 1', as.character(2:6))),
+    mode = factor(mode, levels = c('backprop', 'linear_readout', 'theory')),
+    scaling = factor(scaling)
+  ) %>%
+  group_by(model_seed, epoch, mode, scaling) %>%
+  summarise(margin = mean(margin)) %>%
+  ggplot(aes(epoch+1, margin, linetype=mode, color=scaling, group=paste(mode, scaling))) +
+  geom_hline(yintercept = 0, linetype='dashed') +
+  geom_hline(aes(linetype = factor('theory', levels = c('backprop', 'linear_readout', 'theory')), yintercept = average_test_margin(alpha_ntk))) +
+  stat_summary(geom='ribbon', alpha=0.3, color=NA, fill='grey80', show.legend=FALSE, fun.ymin = function(x) {mean(x)-sd(x)}, fun.ymax = function(x) {mean(x)+sd(x)}) +
+  stat_summary(geom='line', show.legend = TRUE, drop=FALSE) +
+  theme_princti() +
+  labs(x = 'Epoch', y = 'Test margin', color='Init. scale', linetype=NULL) +
+  scale_y_continuous(n.breaks=3) +
+  scale_x_log10(breaks=c(1, 1e3, 1e6), labels = scales::parse_format()(c('1', '10^3', '10^6'))) +
+  scale_linetype_manual(values = c('solid', '31', 'dotted') %>% magrittr::set_names(c('backprop', 'linear_readout', 'theory')), labels = c('Backpropagation', 'Linear readout', 'Theory (NTK)')) +
+  scale_color_manual(values = c(scaling_palette[2:1]) %>% magrittr::set_names(c(1e-6, 1.)), breaks = c(1e-6, 1.), labels = scales::parse_format()(c('10^{-3}', '1')))
+fig_ce_3
+```
+
+```{r}
+fig_ce_4 <-
+  crossentropy_ti_rank_rep %>%
+  ggplot(aes(epoch+1, rank_rep, linetype=mode, color=factor(scaling), group=paste(mode, scaling))) +
+  geom_hline(yintercept = 0, linetype='dashed') +
+  stat_summary(geom='ribbon', alpha=0.3, color=NA, fill='grey80', show.legend=FALSE, fun.ymin = function(x) {mean(x)-sd(x)}, fun.ymax = function(x) {mean(x)+sd(x)}) +
+  stat_summary(geom='line', show.legend = FALSE) +
+  theme_princti() +
+  labs(x = 'Epoch', y = 'Rank rep.', color=NULL) +
+  scale_y_continuous(n.breaks=3) +
+  scale_x_log10() +
+  theme_princti() +
+  labs(x = 'Epoch', y = 'Rank rep.', color='Init. scale', linetype=NULL) +
+  scale_y_continuous(n.breaks=3) +
+  scale_x_log10(breaks=c(1, 1e3, 1e6), labels = scales::parse_format()(c('1', '10^3', '10^6'))) +
+  scale_linetype_manual(values = c('solid', '31')) +
+  scale_color_manual(values = c(scaling_palette[2:1]) %>% magrittr::set_names(c(1e-6, 1.)), breaks = c(1e-6, 1.), labels = scales::parse_format()(c('10^{-3}', '1')))
+```
+
+```{r}
+fig_s6 <-
+  fig_ce_1 + ((fig_ce_3 + fig_ce_4) + plot_layout(design='1\n2', guides='collect')) + fig_depth_gen +
+  plot_layout(design = '11\n23', widths = c(2, 3), heights = c(2,1)) +
+  plot_annotation(tag_levels = 'a')
+fig_s6 <-
+  fig_s6 &
+  theme(
+    plot.margin = unit(c(0,0,0,0), 'pt'),
+    legend.key.size = unit(8, 'pt'),
+    legend.box.margin = unit(c(0,0,0,0), 'pt'),
+    legend.box.spacing=unit(0, 'pt')
+  )
+frac <- 0.95
+width <- 15.11078
+fig_s6
+ggsave('../figures/supp-ti/fig-s6-raw.pdf', width=frac*width, height=7.5/7*frac*width, units = "cm")
+```
+
+## Fig. S7: Hidden-layer representations
+
+```{r}
+similarity_schema_2 <-
+  expand.grid(
+    j1 = 1:7,
+    j2 = 1:7
+  ) %>%
+  as_tibble() %>%
+  mutate(
+    `Rank\nrep.` = ((gd_rank(j2, alpha=0.1)-gd_rank(j1, alpha=0.1))/(gd_rank(7, alpha=0.1)-gd_rank(1, alpha=0.1)))**2,
+    `Exchangeable\nrep.` = if_else(j1==j2, 0, 1),
+    j1 = map_chr(j1, ~LETTERS[.]) %>%
+      factor(levels = LETTERS[1:7]),
+    j2 = map_chr(j2, ~LETTERS[.]) %>%
+      factor(levels = LETTERS[7:1])
+  ) %>%
+  pivot_longer(cols = c(`Exchangeable\nrep.`, `Rank\nrep.`)) %>%
+  mutate(
+    name = factor(name, levels = c('Exchangeable\nrep.', 'Rank\nrep.'))
+  ) %>%
+  ggplot(aes(j1, j2, fill = value)) +
+  geom_tile() +
+  theme_princti() +
+  scale_y_discrete() +
+  scale_x_discrete() +
+  coord_equal() +
+  scale_fill_gradient(low='black', high='white', breaks=c(0, 1)) +
+  labs(x = 'Item 1', y = 'Item 2', fill = 'Distance') +
+  facet_wrap(~name, nrow=1)
+similarity_schema_2
+```
+
+
+```{r}
+trial_levels <- expand.grid(i=1:7, j=1:7)
+trial_levels <- paste(trial_levels$i, trial_levels$j)
+denom <- gd_rank(7, alpha=0.1)-gd_rank(1, alpha=0.1)
+similarity_1 <-
+  expand.grid(
+  i1 = 1:7, i2 = 1:7, j1 = 1:7, j2 = 1:7
+) %>%
+  as_tibble() %>%
+  mutate(
+    `Exchangeable` = case_when(
+      (i1==i2)&(j1==j2)~0,
+      (i1==i2)|(j1==j2)~1/2,
+      TRUE~1
+    ),
+    `Rank` = 1/2*(((gd_rank(i2, alpha=0.1)-gd_rank(i1, alpha=0.1))/denom)**2+((gd_rank(j2, alpha=0.1)-gd_rank(j1, alpha=0.1))/denom)**2),
+    `Rank diff.` = (((gd_rank(j1, alpha=0.1)-gd_rank(i1, alpha=0.1))-(gd_rank(j2, alpha=0.1)-gd_rank(i2, alpha=0.1)))/(2*denom))**2,
+    x1 = paste(i1, j1) %>%
+      factor(levels = trial_levels),
+    x2 = paste(i2, j2) %>%
+      factor(levels = trial_levels) %>%
+      fct_rev()
+  ) %>%
+  pivot_longer(cols = c(`Exchangeable`, `Rank`, `Rank diff.`)) %>%
+  mutate(name = factor(name, levels = c('Exchangeable', 'Rank', 'Rank diff.'))) %>%
+  ggplot(aes(x1, x2, fill = value)) +
+  geom_tile() +
+  theme_princti() +
+  scale_y_discrete(breaks = c()) +
+  scale_x_discrete(breaks = c()) +
+  coord_equal() +
+  facet_grid(name~'') +
+  coord_equal() +
+  scale_fill_gradient(breaks=c(0,1), low='black', high='white') +
+  labs(x = 'Trial 1', y = 'Trial 2', fill = 'Distance') +
+  theme(
+    legend.key.size = unit(4, 'pt'),
+    plot.margin = unit(c(0,0,0,0), 'pt'),
+    legend.box.margin = unit(c(0,0,0,0), 'pt'),
+    legend.box.spacing=unit(0, 'pt')
+  )
+similarity_1
+```
+
+```{r}
+similarity_2 <-
+  time_traj_ti_similarity %>%
+  filter((type == 'after training') | (scaling == 1.)) %>%
+  mutate(
+    type = case_when(
+      type == 'before training' ~ 'At initialization',
+      scaling == 1. ~ 'Lazy',
+      scaling == 1e-6 ~ 'Rich',
+      TRUE ~ 'Very rich'
+    ),
+    data_type = case_when(
+      (i1 == i2) & (j1 == j2) ~ 'same',
+      (i1 == i2) | (j1==j2) ~ 'overlapping',
+      TRUE ~ 'distinct'
+    ),
+    features = features %>%
+      fct_recode(`Postact.`='linear readout', `Preact.` = 'preactivation', NTK = 'ntk') %>%
+      factor(levels = c('Preact.', 'Postact.', 'NTK'))
+  ) %>%
+  #filter(features == 'linear readout') %>%
+  mutate(
+    x1 = paste(i1,j1) %>%
+      as_factor(),
+    x2 = paste(i2, j2) %>%
+      as_factor() %>%
+      fct_rev()
+  ) %>%
+  group_by(x1, x2, type, features) %>%
+  summarise(distance = mean(distance)) %>%
+  ggplot(aes(x1, x2, fill = distance)) +
+  geom_tile() +
+  theme_princti() +
+  scale_y_discrete(breaks = c()) +
+  scale_x_discrete(breaks = c()) +
+  coord_equal() +
+  scale_fill_gradient(limits = c(0, 1), breaks=c(0,1), low='black', high='white') +
+  labs(x = 'Trial 1', y = 'Trial 2', fill = 'Distance') +
+  facet_grid(features~type) +
+  theme(
+    legend.key.size = unit(4, 'pt'),
+    plot.margin = unit(c(0,0,0,0), 'pt'),
+    legend.box.margin = unit(c(0,0,0,0), 'pt'),
+    legend.box.spacing=unit(0, 'pt')
+  )
+similarity_2
+```
+
+```{r}
+similarity_fit <-
+  rsa %>%
+  filter((type == 'after training') | (scaling == 1.)) %>%
+  mutate(
+    type = case_when(
+      type == 'before training' ~ 'At initialization',
+      scaling == 1. ~ 'Lazy',
+      scaling == 1e-6 ~ 'Rich',
+      TRUE ~ 'Very rich'
+    )
+  ) %>%
+  filter(params != 'intercept', type != 'At initialization') %>%
+  mutate(
+    params = factor(params, levels = c('all', 'add', 'rank', 'rank_diff')),
+    features = features %>%
+      fct_recode(`Postactivation`='linear readout', `Preactivation` = 'preactivation', NTK = 'ntk') %>%
+      factor(levels = c('Preactivation', 'Postactivation', 'NTK'))
+  ) %>%
+  ggplot(aes(params, 1-loss, color=type, group=paste(type, features))) +
+  stat_summary(geom='linerange', show.legend = FALSE) +
+  stat_summary(geom='point', show.legend = FALSE, shape=16) +
+  stat_summary(geom='line') +
+  scale_x_discrete(labels = c('All', '\nExchangeable', 'Rank', '\nRank diff.'), breaks= c('all', 'add', 'rank', 'rank_diff')) +
+  scale_color_manual(values = scaling_palette) +
+  theme_princti() +
+  facet_grid(~features) +
+  scale_y_continuous(breaks=c(0,0.5, 1), limits=c(0,1)) +
+  labs(x = NULL, y = 'Variance Explained', color=NULL)
+similarity_fit
+```
+
+```{r}
+(similarity_1 + similarity_2 + similarity_fit +
+   plot_layout(widths=c(1, 4), heights=c(3,1), design='12\n33') +
+   plot_annotation(tag_levels = 'a')) &
+  theme(
+    legend.key.size = unit(4, 'pt'),
+    plot.margin = unit(c(0,0,0,0), 'pt'),
+    legend.box.margin = unit(c(0,0,0,0), 'pt'),
+    legend.box.spacing=unit(0, 'pt')
+  )
+frac <- 0.95
+width <- 15.11078
+ggsave('../figures/supp-ti/fig-s7-raw.pdf', width=frac*width, height=4/7*frac*width, units = "cm")
+```
+
+
+## Comparison with Nelli et al. (2023)
+
+```{r}
+fig_nelli_1 <-
+  nelli_comparison %>%
+  filter(group=='Nelli et al. (2023)', j!=k, g_factor != '[0.025, 0.025]') %>%
+  mutate(
+    symbolic_distance = abs(k-j),
+    margin = sign(k-j)*margin,
+    symbolic_distance = if_else(symbolic_distance==1, 'SD: 1', as.character(symbolic_distance)) %>%
+      factor(levels = c('SD: 1', as.character(2:6))),
+    label = map2_chr(pmin(j,k), pmax(j,k), ~paste0(LETTERS[..1+1],LETTERS[..2+1])),
+    regime = if_else(g_factor == '[1, 1]', 'lazy', 'rich'),
+    symmetric_input_weights = if_else(
+      symmetric_input_weights == 'True', 'Weight symm.', 'No weight symm.'
+    )
+    # group = case_when(
+    #   hdims == 1000 ~ 'Wide network',
+    #   batch_size == 12 ~ 'Full-batch training',
+    #   TRUE ~ 'Nelli et al. (2023)'
+    # )
+  ) %>%
+  ggplot(aes(x = label, y = margin, color = regime, shape=symmetric_input_weights, linetype=symmetric_input_weights, group=paste(regime, symmetric_input_weights))) +
+  geom_hline(yintercept=0, linetype='dashed') +
+  stat_summary(geom='line', show.legend = FALSE) +
+  stat_summary(geom = 'point', show.legend=FALSE) +
+  stat_summary(geom = 'linerange', show.legend=FALSE) +
+  scale_shape_manual(values = c(16, 1)) +
+  facet_grid(~symbolic_distance, scales='free_x', space='free_x', switch='x') +
+  labs(x = 'Item pair', y = 'Margin', color = 'Regime', linetype=NULL) +
+  scale_color_manual(values = scaling_palette) +
+  scale_x_discrete(labels = c()) +
+  theme_princti() +
+  theme(strip.placement = 'outside')
+fig_nelli_1
+```
+
+```{r}
+trial_levels <- expand.grid(i=0:6, j=0:6)
+trial_levels <- paste(trial_levels$i, trial_levels$j)
+fig_nelli_2 <-
+  nelli_comparison_similarity %>%
+  filter(type=='after training', group=='Nelli et al. (2023)', g_factor != '[0.025, 0.025]') %>%
+  mutate(
+    j1 = map_chr(j1, ~LETTERS[.+1]) %>%
+      factor(levels = LETTERS[1:7]),
+    j2 = map_chr(j2, ~LETTERS[.+1]) %>%
+      factor(levels = LETTERS[7:1]),
+    x1 = paste(i1,j1) %>%
+      as_factor(),
+    x2 = paste(i2, j2) %>%
+      as_factor() %>%
+      fct_rev(),
+    regime = if_else(g_factor == '[1, 1]', 'lazy', 'rich'),
+    symmetric_input_weights = if_else(
+      symmetric_input_weights == 'True', 'Weight symm.', 'No weight symm.'
+    ),
+    features = case_when(
+      features == 'linear readout' ~ 'Postact.',
+      features == 'preactivation' ~ 'Preact.',
+      features == 'ntk' ~ 'NTK'
+    ) %>%
+      factor(levels = c('Preact.', 'Postact.', 'NTK'))
+  ) %>%
+  ggplot(aes(x1, x2, fill = distance)) +
+  geom_tile() +
+  theme_princti() +
+  scale_y_discrete(breaks = c()) +
+  scale_x_discrete(breaks = c()) +
+  coord_equal() +
+  scale_fill_gradient(low='black', high='white', breaks=c(0, 1)) +
+  labs(x = 'Trial 1', y = 'Trial 2', fill = 'Distance') +
+  facet_grid(features~symmetric_input_weights+regime) +
+  theme(
+    legend.key.size = unit(4, 'pt'),
+    plot.margin = unit(c(0,0,0,0), 'pt'),
+    legend.box.margin = unit(c(0,0,0,0), 'pt'),
+    legend.box.spacing=unit(0, 'pt')
+  )
+fig_nelli_2
+```
+
+```{r}
+fig_nelli_3 <-
+  nelli_comparison_rsa  %>%
+  filter(params != 'intercept', group=='Nelli et al. (2023)', type == 'after training', g_factor != '[0.025, 0.025]') %>%
+  mutate(
+    params = factor(params, levels = c('all', 'add', 'rank', 'rank_diff')),
+    features = case_when(
+      features == 'linear readout' ~ 'Postact.',
+      features == 'preactivation' ~ 'Preact.',
+      features == 'ntk' ~ 'NTK'
+    ) %>%
+      factor(levels = c('Preact.', 'Postact.', 'NTK')),
+    regime = if_else(g_factor=='[1, 1]', 'lazy', 'rich'),
+    symmetric_input_weights = if_else(
+      symmetric_input_weights == 'True', 'Weight symm.', 'No weight symm.'
+    )
+  ) %>%
+  ggplot(aes(params, 1-loss, color=regime, linetype=symmetric_input_weights, shape = symmetric_input_weights, group=paste(symmetric_input_weights, g_factor))) +
+  stat_summary(geom='linerange', show.legend = FALSE) +
+  stat_summary(geom='point', show.legend = TRUE) +
+  stat_summary(geom='line') +
+  scale_shape_manual(values = c(16, 1)) +
+  scale_x_discrete(labels = c('All', '\nExchangeable', 'Rank', '\nRank diff.'), breaks= c('all', 'add', 'rank', 'rank_diff')) +
+  theme_princti() +
+  facet_grid(~features) +
+  scale_color_manual(values = scaling_palette) +
+  scale_y_continuous(breaks=c(0,0.5, 1), limits=c(0,1)) +
+  labs(x = NULL, y = 'Variance Explained', color='Regime', linetype=NULL, shape=NULL)
+fig_nelli_3
+```
+
+```{r}
+fig_nelli_4 <-
+  nelli_comparison_rsa %>%
+  filter(params == 'rank_diff', type == 'after training', features == 'linear readout', (g_factor=='[0.025, 1]')|((g_factor == '[0.025, 0.025]')&(group=='Nelli et al. (2023)'))) %>%
+  mutate(
+    group = if_else(g_factor == '[0.025, 1]', group, 'Equal init.') %>%
+      factor(levels = c('Nelli et al. (2023)', 'Long training', 'Full-batch training', 'Equal init.', 'Wide network')) %>%
+      fct_recode(Original = 'Nelli et al. (2023)', `\nLong training` = 'Long training', `Full-batch` = 'Full-batch training',
+                 `\nEqual init.` = 'Equal init.'),
+    symmetric_input_weights = if_else(
+      symmetric_input_weights == 'True', 'Weight symm.', 'No weight symm.'
+    )
+  ) %>%
+  ggplot(aes(group, 1-loss, linetype = symmetric_input_weights, shape = symmetric_input_weights, color = factor('rich', levels = c('lazy', 'rich')), group = symmetric_input_weights))+
+  stat_summary(geom='linerange', show.legend = FALSE) +
+  stat_summary(geom='point', show.legend = TRUE) +
+  scale_shape_manual(values = c(16, 1)) +
+  stat_summary(geom='line') +
+  theme_princti() +
+  scale_color_manual(values = scaling_palette, drop=FALSE) +
+  scale_y_continuous(breaks=c(0,0.5, 1), limits=c(0,1)) +
+  labs(x = NULL, y = 'Variance Explained', color='Regime', linetype=NULL, shape=NULL)
+fig_nelli_4
+```
+
+```{r}
+(((fig_nelli_1 + fig_nelli_2) / (fig_nelli_3 + fig_nelli_4 + plot_layout(width = c(3, 2), guides = 'collect'))) +
+  plot_layout(heights = c(2,1)) +
+   plot_annotation(tag_levels = 'a')) &
+  theme(
+    legend.key.size = unit(4, 'pt'),
+    plot.margin = unit(c(0,0,0,0), 'pt'),
+    legend.box.margin = unit(c(0,0,0,0), 'pt'),
+    legend.box.spacing=unit(0, 'pt')
+  )
+frac <- 0.95
+width <- 15.11078
+ggsave('../figures/supp-ti/fig-s8-raw.pdf', width=frac*width, height=4.5/7*frac*width, units = "cm")
+```
+
+
+```{r}
+nelli_comparison_similarity %>%
+  filter(type=='after training', group=='Nelli et al. (2023)', features=='ntk', symmetric_input_weights=='True') %>%
+  mutate(
+    j1 = map_chr(j1, ~LETTERS[.+1]) %>%
+      factor(levels = LETTERS[1:7]),
+    j2 = map_chr(j2, ~LETTERS[.+1]) %>%
+      factor(levels = LETTERS[7:1]),
+    x1 = paste(i1,j1) %>%
+      as_factor(),
+    x2 = paste(i2, j2) %>%
+      as_factor() %>%
+      fct_rev()
+  ) %>%
+  ggplot(aes(x1, x2, fill = distance)) +
+  geom_tile() +
+  theme_princti() +
+  scale_y_discrete() +
+  scale_x_discrete() +
+  coord_equal() +
+  #scale_fill_gradient(low='black', high='white', breaks=c(0, 1)) +
+  labs(x = 'Item 1', y = 'Item 2', fill = 'Distance') +
+  facet_grid(features~symmetric_input_weights+g_factor) +
+  theme(
+    legend.key.size = unit(4, 'pt'),
+    plot.margin = unit(c(0,0,0,0), 'pt'),
+    legend.box.margin = unit(c(0,0,0,0), 'pt'),
+    legend.box.spacing=unit(0, 'pt')
+  )
+```
+
+
+```{r}
+nelli_comparison_rsa %>%
+  filter(
+    epochs==100000, features == 'linear readout', type == 'after training',
+    (hdims == 20)|(batch_size == 1), params != 'intercept'
+  ) %>%
+  mutate(
+    group = case_when(
+      hdims == 1000 ~ 'Wide network',
+      batch_size == 12 ~ 'Full-batch training',
+      TRUE ~ 'Nelli et al. (2023)'
+    )
+  ) %>%
+  ggplot(
+    aes(group, loss, color = params, group = paste(params, symmetric_input_weights), linetype=symmetric_input_weights)
+  ) +
+  stat_summary(geom='point') +
+  stat_summary(geom='line') +
+  facet_wrap(~g_factor, ncol=3) +
+  theme_princti()
+```
+
+# Impact of noise (i.e. violation of exchangeability)
+
+## Accuracy and margin
+
+```{r}
+noise_sum <-
+  noise_preds %>%
+  filter(j!=k) %>%
+  group_by(hdims, model_seed) %>%
+  summarise(
+    acc = mean(sign(k-j)==sign(margin)),
+    margin = mean(sign(k-j)*margin)
+  )
+fig_noise_a <-
+  noise_sum %>%
+  ggplot(aes(hdims, acc)) +
+  stat_summary(geom='point', shape=20) +
+  stat_summary(geom='line') +
+  scale_x_log10() +
+  theme_princti() +
+  scale_y_continuous(breaks=c(0.5, 1)) +
+  geom_hline(yintercept=0.5, linetype='dashed') +
+  labs(x = '# Units', y = 'Accuracy')
+fig_noise_b <-
+  noise_sum %>%
+  ggplot(aes(hdims, margin)) +
+  stat_summary(geom='point', shape=20) +
+  stat_summary(geom='line') +
+  scale_x_log10() +
+  theme_princti() +
+  scale_y_continuous(breaks=c(0., 1)) +
+  geom_hline(yintercept=0., linetype='dashed') +
+  labs(x = '# Units', y = 'Avg. margin')
+fig_noise_b
+```
+
+```{r}
+alpha_ntk <- get_alphas(1,1,0)[[2]]
+fig_noise_c <-
+  noise_preds %>%
+  mutate(
+    pred = gd_margin(j+1, k+1, t=Inf, alpha = alpha_ntk)
+  ) %>%
+  group_by(hdims, model_seed) %>%
+  summarise(error = mean((pred-margin)**2)) %>%
+  group_by(hdims) %>%
+  summarise(error = mean(error)) %>%
+  ggplot(aes(hdims, error)) +
+  stat_summary(geom='point', shape=20) +
+  stat_summary(geom='line') +
+  scale_x_log10() +
+  theme_princti() +
+  labs(x = '# Units', y = 'Pred. error\nof ind. model')
+fig_noise_c
+```
+
+```{r}
+fig_noise_d <-
+  noise_preds %>%
+  group_by(hdims, j, k) %>%
+  summarise(margin = mean(margin)) %>%
+  mutate(
+    pred = gd_margin(j+1, k+1, t=Inf, alpha = alpha_ntk)
+  ) %>%
+  group_by(hdims) %>%
+  summarise(error = mean((pred-margin)**2)) %>%
+  ggplot(aes(hdims, error)) +
+  stat_summary(geom='point', shape=20) +
+  stat_summary(geom='line') +
+  scale_x_log10() +
+  theme_princti() +
+  labs(x = '# Units', y = 'Pred. error\nof avg. model')
+fig_noise_d
+```
+
+```{r}
+theory_preds <-
+  expand.grid(
+    j = 1:7, k=1:7
+  ) %>%
+  as_tibble() %>%
+  mutate(margin = gd_margin(j,k, alpha=alpha_ntk)) %>%
+  mutate(
+    label = map2_chr(j, k, ~paste0(LETTERS[..1],LETTERS[..2])),
+    symbolic_distance = k-j
+  ) %>%
+  filter(j<k) %>%
+  mutate(
+    symbolic_distance = if_else(symbolic_distance==1, 'SD: 1', as.character(symbolic_distance)) %>%
+      factor(levels = c('SD: 1', as.character(2:6)))
+  )
+fig_noise_e <-
+  noise_preds %>%
+  filter(hdims == 1000) %>%
+  mutate(
+    label = map2_chr(j, k, ~paste0(LETTERS[..1+1],LETTERS[..2+1])),
+    symbolic_distance = k-j
+  ) %>%
+  filter(j<k) %>%
+  mutate(
+    symbolic_distance = if_else(symbolic_distance==1, 'SD: 1', as.character(symbolic_distance)) %>%
+      factor(levels = c('SD: 1', as.character(2:6)))
+  ) %>%
+  ggplot(aes(x = label, y = margin, group=model_seed, color = 'Ind. model')) +
+  geom_line(alpha=0.1) +
+  geom_point(show.legend=FALSE, shape = 20, alpha=0.1) +
+  stat_summary(geom='line', aes(color='Avg. model', group=symbolic_distance)) +
+  stat_summary(geom='point', shape=20, aes(color='Avg. model', group=symbolic_distance)) +
+  geom_line(aes(group='', color='Theory'), data = theory_preds, linetype='11') +
+  geom_point(aes(group='', color='Theory'), data = theory_preds, shape=20, size=0.5) +
+  facet_grid(~symbolic_distance, scales='free_x', space='free', switch='x') +
+  labs(x = 'Item pair', y = 'Margin') + 
+  scale_x_discrete(labels = c()) +
+  scale_alpha(trans = 'log1p', range = c(0.4, 1)) +
+  scale_color_manual(values = c(`Ind. model`='black', `Avg. model` = 'blue', Theory = 'darkgreen')) +
+  theme_princti() +
+  theme(strip.placement = 'outside') +
+  geom_hline(yintercept=0., linetype='dashed')
+```
+
+```{r}
+fig_noise <-
+  fig_noise_a + fig_noise_b + fig_noise_c + fig_noise_d + fig_noise_e +
+  plot_layout(design='125\n345', widths=c(1,1,2.5)) +
+  plot_annotation(tag_levels = 'a')
+fig_noise <-
+  fig_noise &
+  theme(
+    legend.key.size = unit(4, 'pt'),
+    plot.margin = unit(c(0,0,0,0), 'pt'),
+    legend.box.margin = unit(c(0,0,0,0), 'pt'),
+    legend.box.spacing=unit(0, 'pt')
+  )
+fig_noise
+frac <- 0.95
+width <- 15.11078
+ggsave('../figures/supp-ti/fig-s1-raw.pdf', width=frac*width, height=3/7*frac*width, units = "cm")
+```
+

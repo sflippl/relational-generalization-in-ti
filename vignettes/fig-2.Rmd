@@ -1,0 +1,38 @@
+---
+title: "Figure 2"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Figure 2}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+```{r setup}
+library(princti)
+library(tidyverse)
+library(patchwork)
+library(RColorBrewer)
+```
+
+```{r}
+tibble(
+  item = LETTERS[1:7],
+  rank = 3:-3
+) %>%
+  ggplot(aes(item, rank, group='')) +
+  geom_line() +
+  geom_point() +
+  theme_princti() +
+  labs(x = 'Item', y = 'Rank') +
+  theme(plot.margin = unit(c(0,0,0,0), 'pt')) +
+  scale_y_continuous(breaks=c(-3,0,3))
+ggsave('../figures/fig-additive/fig-additive-rank-rep.pdf', width=2.5, height=2.5, units = "cm")
+```
+

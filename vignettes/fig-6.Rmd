@@ -1,0 +1,324 @@
+---
+title: "Figure 6"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Figure 6}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+```{r setup}
+library(princti)
+library(tidyverse)
+library(patchwork)
+library(RColorBrewer)
+```
+
+```{r}
+scaling_levels <- c(
+  'Theory (NTK)',
+  'Lazy',
+  'Rich',
+  'Very rich'
+)
+scaling_palette <- c(
+  'darkgreen',
+  '#1e996fff',
+  '#e5c700ff',
+  '#cc9f28ff'
+)
+```
+
+```{r}
+similarity <-
+  time_traj_ti_similarity %>%
+  filter((type == 'after training') | (scaling == 1.), i1 <= 2, i2 <= 2, j1 <= 2, j2 <= 2, features=='linear readout') %>%
+  mutate(
+    type = case_when(
+      type == 'before training' ~ 'At initialization',
+      scaling == 1. ~ 'Lazy',
+      scaling == 1e-6 ~ 'Rich',
+      TRUE ~ 'Very rich'
+    )
+  ) %>%
+  bind_rows(
+    expand.grid(i1 = 0:2, i2=0:2, j1=0:2, j2=0:2) %>%
+      as_tibble() %>%
+      mutate(
+        type = 'Rank rep.\n(hypothetical)',
+        distance = 1/2*(((gd_rank(j2+1, alpha=0.1)-gd_rank(j1+1, alpha=0.1))/(gd_rank(3, alpha=0.1)-gd_rank(1, alpha=0.1)))**2+((gd_rank(i2+1, alpha=0.1)-gd_rank(i1+1, alpha=0.1))/(gd_rank(3, alpha=0.1)-gd_rank(1, alpha=0.1)))**2)
+      )
+  ) %>%
+  mutate(
+    data_type = case_when(
+      (i1 == i2) & (j1 == j2) ~ 'same',
+      (i1 == i2) | (j1==j2) ~ 'overlapping',
+      TRUE ~ 'distinct'
+    )
+  ) %>%
+  mutate(
+    j1 = map_chr(j1, ~LETTERS[.+1]) %>%
+      factor(levels = LETTERS[1:7]),
+    j2 = map_chr(j2, ~LETTERS[.+1]) %>%
+      factor(levels = LETTERS[7:1]),
+    i1 = map_chr(i1, ~LETTERS[.+1]) %>%
+      factor(levels = LETTERS[1:7]),
+    i2 = map_chr(i2, ~LETTERS[.+1]) %>%
+      factor(levels = LETTERS[7:1]),
+    x1 = paste0(i1, j1),
+    x2 = paste0(i2, j2) %>%
+      as.factor() %>%
+      fct_rev(),
+    type = factor(type, levels = c('Rank rep.\n(hypothetical)', 'At initialization', 'Lazy', 'Rich', 'Very rich'))
+  ) %>%
+  group_by(x1, x2, type) %>%
+  summarise(distance = mean(distance)) %>%
+  ggplot(aes(x1, x2, fill = distance)) +
+  geom_tile() +
+  theme_princti() +
+  scale_y_discrete() +
+  scale_x_discrete() +
+  coord_equal() +
+  scale_fill_gradient(low='black', high='white', breaks=c(0, 1), limits=c(0,1)) +
+  labs(x = 'Trial 1', y = 'Trial 2', fill = 'Distance') +
+  facet_wrap(~type, nrow=1) +
+  theme(axis.text.x = element_text(angle=90, vjust=.5))
+similarity
+```
+## Similarity fits
+
+```{r}
+similarity_fit <-
+  rsa %>%
+  filter((type == 'after training') | (scaling == 1.)) %>%
+  mutate(
+    type = case_when(
+      type == 'before training' ~ 'At initialization',
+      scaling == 1. ~ 'Lazy',
+      scaling == 1e-6 ~ 'Rich',
+      TRUE ~ 'Very rich'
+    )
+  ) %>%
+  filter(params != 'intercept', type != 'At initialization') %>%
+  mutate(
+    params = factor(params, levels = c('all', 'add', 'rank', 'rank_diff'))
+  ) %>%
+  ggplot(aes(params, 1-loss, color=type, group=paste(type, features))) +
+  stat_summary(geom='linerange', show.legend = FALSE) +
+  stat_summary(geom='point', show.legend = FALSE, shape=16) +
+  stat_summary(geom='line') +
+  #scale_x_discrete(labels = c('All', '\nOverlap', 'Rank', '\nOutput'), breaks= c('all', 'add', 'rank', 'label')) +
+  scale_color_manual(values = scaling_palette[2:4]) +
+  theme_princti() +
+  facet_wrap(~features, nrow=3) +
+  #scale_y_continuous(breaks=c(0,1)) +
+  labs(x = NULL, y = 'Variance\nExplained', color=NULL)
+similarity_fit
+```
+
+```{r}
+alpha_ntk <- get_alphas(1,1,0)[[2]]
+df <-
+  time_traj_ti %>%
+  select(epoch, model_seed, j, k, margin, scaling) %>%
+  inner_join(
+    time_traj_ti_lr %>%
+      select(model_seed, scaling, lr) %>%
+      unique()
+  ) %>%
+  mutate(
+    t = epoch*lr/6*(3572-1136),
+    pred = gd_margin(j+1, k+1, t=t, alpha = alpha_ntk),
+    error = (pred-margin)**2,
+    scaling = case_when(
+      scaling == 1 ~ 'Lazy',
+      scaling == 1e-6 ~ 'Rich',
+      abs(log(scaling, base=10)+32)<0.01 ~ 'Very rich'
+    ) %>%
+      factor(
+        levels = scaling_levels
+      )
+  ) %>%
+  select(-lr, -t)
+df_last <-
+  df %>%
+  group_by(model_seed, scaling) %>%
+  summarise(epoch = max(epoch)) %>%
+  inner_join(df)
+df_err <-
+  expand.grid(
+    epoch = 0:2000,
+    model_seed = 0:19,
+    j = 0:6,
+    k = 0:6,
+    scaling = c(
+      'Lazy',
+      'Rich',
+      'Very rich'
+    ) %>%
+      factor(levels = scaling_levels)
+  ) %>%
+  as_tibble() %>%
+  full_join(df) %>%
+  full_join(df_last %>% select(-epoch, -margin, -pred) %>% rename(last_error = error)) %>%
+  mutate(
+    error = if_else(is.na(error), last_error, error)
+  ) %>%
+  select(-last_error)
+```
+
+```{r}
+fig_error <-
+  df_err %>%
+  group_by(epoch, model_seed, scaling) %>%
+  summarise(error = mean(error)) %>%
+  ggplot(aes(epoch, error, color=scaling, fill=scaling, group=scaling, fill=scaling)) +
+  stat_summary(geom='ribbon', color=NA, alpha=0.3, show.legend=FALSE, fun.ymin = function(x) mean(x)-sd(x), fun.ymax = function(x) mean(x)+sd(x)) +
+  stat_summary(geom='line', show.legend=FALSE) +
+  scale_x_continuous(trans='log1p') +
+  coord_cartesian(xlim = c(0, 300)) +
+  theme_princti() +
+  labs(x = 'Training epoch', y = 'Error of NTK pred.', color = NULL, fill=NULL) +
+  scale_color_manual(values = scaling_palette[2:4], drop = TRUE) +
+  scale_fill_manual(values = scaling_palette[2:4], drop = TRUE) +
+  scale_x_continuous(breaks = c(0, 300))
+fig_error
+```
+
+```{r}
+lines_df <-
+  tibble(
+    scaling = c(1, 1e-6, 1e-32),
+    scaling_name = c(
+      'Lazy',
+      'Rich',
+      'Very rich'
+    ) %>%
+      factor(levels = scaling_levels)
+  )
+fig_margin <-
+  ti_scaling %>%
+  filter(abs(k-j) > 1) %>%
+  group_by(scaling, model_seed) %>%
+  summarise(margin = mean(sign(k-j)*margin)) %>%
+  ggplot(aes(sqrt(scaling), margin)) +
+  geom_vline(mapping = aes(xintercept = sqrt(scaling), color=scaling_name), data=lines_df, show.legend=FALSE, alpha=0.5) +
+  stat_summary(geom='line') +
+  stat_summary(geom='ribbon', alpha = 0.3, fun.ymin = function(x) {mean(x)-sd(x)}, fun.ymax = function(x) {mean(x)+sd(x)}) +
+  scale_x_continuous(
+    trans = scales::trans_new(
+      name = 'reverse_log10',
+      transform = function(x) {-log(x, base=10)},
+      inverse = function(x) {10**(-x)}
+    ),
+    breaks = c(1, 1e-16),
+    labels = c('1', parse(text='10^{-16}'))
+  ) +
+  scale_color_manual(values = scaling_palette, labels = scaling_levels, drop = FALSE) +
+  scale_y_continuous(n.breaks = 3) +
+  labs(x = 'Scale', y = 'Test margin') +
+  theme_princti()
+fig_margin
+```
+
+```{r}
+fig_acc <-
+  ti_scaling %>%
+  filter(abs(k-j) > 1) %>%
+  group_by(scaling, model_seed) %>%
+  summarise(margin = mean(sign(k-j)==sign(margin))) %>%
+  ggplot(aes(sqrt(scaling), margin)) +
+  geom_vline(mapping = aes(xintercept = sqrt(scaling), color=scaling_name), data=lines_df, show.legend=FALSE, alpha=0.5) +
+  stat_summary(geom='line') +
+  stat_summary(geom='ribbon', alpha = 0.3, fun.ymin = function(x) {mean(x)-sd(x)}, fun.ymax = function(x) {mean(x)+sd(x)}) +
+  #stat_summary(geom='point') +
+  #geom_point() +
+  scale_x_continuous(
+    trans = scales::trans_new(
+      name = 'reverse_log10',
+      transform = function(x) {-log(x, base=10)},
+      inverse = function(x) {10**(-x)}
+    ),
+    breaks = c(1e-16, 1),
+    labels = c(parse(text='10^{-16}'), '1')
+  ) +
+  scale_color_manual(values = scaling_palette, labels = scaling_levels, drop = FALSE) +
+  scale_y_continuous(n.breaks = 3, limits=c(0.75, 1)) +
+  labs(x = 'Scale', y = 'Test acc.') +
+  theme_princti()
+fig_acc
+```
+
+```{r}
+df_last <-
+  df_last %>%
+  bind_rows(
+    expand.grid(
+      j = 1:7,
+      k = 1:7
+    ) %>%
+      as_tibble() %>%
+      dplyr::mutate(
+        scaling = 'Theory (NTK)',
+        margin = gd_margin(j, k, alpha=alpha_ntk),
+        j = j-1,
+        k = k-1
+      )
+  ) %>%
+  filter(j != k) %>%
+  mutate(
+      label = map2_chr(j, k, ~paste0(min(LETTERS[..1+1],LETTERS[..2+1]), max(LETTERS[..1+1], LETTERS[..2+1]))),
+      symbolic_distance = abs(k-j),
+      margin = sign(k-j)*margin,
+    symbolic_distance = if_else(symbolic_distance==1, 'SD: 1', as.character(symbolic_distance)) %>%
+      factor(levels = c('SD: 1', as.character(2:6))),
+    correct = if_else(margin > 0, 'yes', 'no')
+  )
+fig_gen <-
+  df_last %>%
+  ggplot(aes(label, margin, group=scaling, color=scaling)) +
+  geom_hline(yintercept = 0, linetype='dashed') +
+  stat_summary(mapping = aes(shape = correct), geom='point', size=2.5, show.legend = FALSE, data = df_last %>% filter(scaling != 'Theory (NTK)')) +
+  stat_summary(geom='ribbon', alpha=0.3, color=NA, fill='grey80', show.legend=FALSE, fun.ymin = function(x) {mean(x)-sd(x)}, fun.ymax = function(x) {mean(x)+sd(x)}) +
+  stat_summary(geom='line', data = df_last %>% filter(scaling != 'Theory (NTK)'), show.legend = TRUE, size=1.5) +
+  stat_summary(mapping = aes(shape = correct), geom='point', size=2.5, show.legend = FALSE, data = df_last %>% filter(scaling == 'Theory (NTK)')) +
+  stat_summary(geom='line', data = df_last %>% filter(scaling == 'Theory (NTK)'), show.legend = FALSE, linetype = '11', size=1.5) +
+  facet_grid(~symbolic_distance, scales='free_x', space='free', switch = 'x') +
+  theme_princti() +
+  labs(x = 'Item pair', y = 'Margin', color = NULL, linetype = NULL) +
+  scale_color_manual(values = scaling_palette %>% magrittr::set_names(scaling_levels), drop = FALSE) +
+  scale_y_continuous(breaks = c(0,1,2)) +
+  scale_shape_manual(values = c(yes = 16, no = 1), breaks=NULL) +
+  scale_x_discrete(labels=c()) +
+  theme(
+    strip.placement = 'outside'
+  )
+```
+
+```{r}
+design <- "1255\n3455\n6667"
+fig_1 <-
+  ((wrap_elements(grid::textGrob('Network'))+theme_princti()) + fig_error + fig_margin + fig_acc + fig_gen) +
+  plot_layout(guides = 'keep', design = '125\n345', widths = c(1,1,2.5))
+fig <-
+  ((fig_1/similarity) +
+  plot_layout(heights = c(2,1)) +
+  plot_annotation(tag_levels = 'a')) &
+  theme(
+    legend.key.size = unit(4, 'pt'),
+    plot.margin = unit(c(0,0,0,0), 'pt'),
+    legend.box.margin = unit(c(0,0,0,0), 'pt'),
+    legend.box.spacing=unit(0, 'pt')
+  )
+frac <- 0.95
+width <- 15.11078
+fig
+ggsave('../figures/fig-rich/fig-rich-raw.pdf', width=frac*width, height=4.5/7*frac*width, units = "cm")
+```

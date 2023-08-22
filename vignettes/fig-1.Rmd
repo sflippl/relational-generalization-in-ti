@@ -1,0 +1,130 @@
+---
+title: "Figure 1"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Figure 1}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+```{r setup}
+library(princti)
+library(tidyverse)
+library(scales)
+library(patchwork)
+library(RColorBrewer)
+```
+
+## TI schema (Fig. 1c)
+
+```{r}
+fig_schema <-
+  expand.grid(
+  item_1_num = 1:7,
+  item_2_num = 1:7
+) %>%
+  mutate(
+    item_1 = map_chr(item_1_num, ~LETTERS[.]),
+    item_2 = map_chr(item_2_num, ~LETTERS[.])
+  ) %>%
+  filter(item_1_num != item_2_num) %>%
+  mutate(
+    choice = if_else(item_1_num < item_2_num, 'left', 'right'),
+    type = if_else(abs(item_1_num-item_2_num) == 1, 'train', 'test'),
+    label = paste0(item_1, item_2),
+    item_1 = factor(item_1, levels = LETTERS[7:1])
+  ) %>%
+  ggplot(aes(item_2, item_1, fill = choice, alpha = type, label = label)) +
+  geom_tile() +
+  theme_princti() +
+  scale_alpha_manual(values = c(train = 1., test = 0.6)) +
+  scale_fill_manual(values = c(left = muted('red'), right = muted('blue'))) +
+  coord_fixed() +
+  scale_y_discrete(breaks = LETTERS[7:1]) +
+  scale_x_discrete(position = 'top') +
+  labs(alpha = 'Stage', fill = 'Choice', x = 'Right item', y = 'Left item') +
+  theme(
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+fig_schema
+```
+
+## Accuracy per item pair (Fig. 1d)
+
+```{r}
+fig_accs <-
+  jensen_data_monkeys %>%
+  mutate(
+    label = map2_chr(
+      target, distractor, ~paste0(LETTERS[[..1]], LETTERS[[..2]])
+    ),
+    symbolic_distance = if_else(abs(target-distractor)==1, 'SD: 1', as.character(abs(target-distractor))) %>%
+      factor(levels = c('SD: 1', '2', '3', '4', '5', '6'))
+  ) %>%
+  ggplot(aes(x = label, y = acc, group=symbolic_distance)) +
+  stat_summary(geom='line') +
+  stat_summary(geom='point', shape=20) +
+  stat_summary(geom='ribbon', alpha=0.3) +
+  facet_grid(~symbolic_distance, scales='free_x', space='free', switch = 'x') +
+  labs(x = 'Item pair', y = 'Accuracy') +
+  theme_princti() +
+  theme(
+    axis.text.x = element_text(size = 7, angle = 90, vjust=0.5),
+    strip.placement = 'outside'
+  ) +
+  coord_cartesian(ylim = c(0.5, 1)) +
+  scale_y_continuous(n.breaks=3)
+fig_accs
+```
+
+## Symbolic distance (Fig. 1e)
+
+```{r}
+fig_sd <-
+  bind_rows(
+  ciranka_data %>% mutate(label = 'With ME'),
+  jensen_data_humans %>% mutate(label = 'W/out ME')
+) %>%
+  mutate(
+    split = if_else(symbolic_distance==1, 'Train', 'Test'),
+    label = factor(label, levels = c('W/out ME', 'With ME'))
+  ) %>%
+  ggplot(aes(symbolic_distance, acc, linetype=label, shape=split, group=label)) +
+  stat_summary(geom='ribbon', alpha=0.3, show.legend = FALSE) +
+  stat_summary(geom='line') +
+  stat_summary(geom='point') +
+  theme_princti() +
+  coord_cartesian(ylim=c(0.5, 1)) +
+  scale_y_continuous(n.breaks=3, labels=c()) +
+  labs(x = 'Symbolic distance', y = NULL, linetype=NULL, shape=NULL) +
+  scale_linetype_manual(values = c(`With ME` = '11', `W/out ME` = 'solid'))
+fig_sd
+```
+
+```{r}
+fig <-
+  (wrap_elements(grid::textGrob('Items')) +
+  wrap_elements(grid::textGrob('Example')) +
+  fig_schema + fig_accs + fig_sd +
+  plot_layout(design='1123\n4445', heights=c(1,2)) +
+  plot_annotation(tag_levels = 'a')) &
+  theme(
+    plot.tag = element_text(face = 'bold', size = 8),
+    legend.key.size = unit(4, 'pt'),
+    plot.margin = unit(c(0,0,0,0), 'pt'),
+    legend.box.margin = unit(c(0,0,0,0), 'pt'),
+    legend.box.spacing=unit(0, 'pt')
+  )
+frac <- 0.95
+width <- 15.11078
+fig
+ggsave('../figures/fig-setup/fig-setup-raw.pdf', width=frac*width, height=4/7*frac*width, units = "cm")
+```

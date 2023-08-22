@@ -1,0 +1,209 @@
+---
+title: "Figures 4 and 5"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Figures 4 and 5}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+```{r setup}
+library(princti)
+library(tidyverse)
+library(patchwork)
+library(e1071)
+```
+
+```{r}
+alpha <- c(0.3, 0.1, 0.02, 0.)
+n <- 7
+```
+
+```{r}
+df_alpha <-
+  expand.grid(
+    alpha=alpha,
+    item=1:n
+  )
+fig_alpha <- 
+  df_alpha %>%
+  mutate(
+    rank = gd_rank(item, alpha=alpha, n=n),
+    item = map_chr(item, ~LETTERS[.])
+  ) %>%
+  ggplot(aes(x=item, y=rank, color=alpha, group=alpha)) +
+  geom_line(show.legend = FALSE, size=2) +
+  scale_color_viridis_c(option='plasma', end=0.7, limits=c(0., 0.3), direction=-1, breaks = c(0., 0.3)) +
+  labs(x='Item', y='Rank', color=parse(text='alpha')) +
+  #scale_x_discrete(labels = c()) +
+  theme_princti()
+df_gen_alpha <-
+  expand.grid(
+    alpha=alpha,
+    j=1:n,
+    k=1:n
+  ) %>%
+  as_tibble() %>%
+  mutate(
+    label = map2_chr(j, k, ~paste0(LETTERS[..1],LETTERS[..2])),
+    symbolic_distance = k-j,
+    margin = gd_margin(j, k, alpha=alpha, n=n)
+  ) %>%
+  filter(j<k)
+fig_gen_alpha <-
+  df_gen_alpha %>%
+  filter((symbolic_distance != 1) | (alpha == 0)) %>% # Hack to make plot look normal
+  mutate(
+    symbolic_distance = if_else(symbolic_distance==1, 'SD: 1', as.character(symbolic_distance)) %>%
+      factor(levels = c('SD: 1', as.character(2:6)))
+  ) %>%
+  ggplot(aes(x = label, y = margin, color = alpha, group=alpha)) +
+  geom_line(show.legend=TRUE, size=2) +
+  geom_point(show.legend=FALSE, shape=20, size=5) +
+  facet_grid(~symbolic_distance, scales='free_x', space='free', switch='x') +
+  scale_color_viridis_c(option='plasma', end=0.7, limits=c(0., 0.3), direction=-1) +
+  labs(x = 'Item pair', y = 'Margin', color=parse(text='alpha')) +
+  scale_x_discrete(labels = c()) +
+  theme_princti() +
+  theme(strip.placement = 'outside')
+fig_n <-
+  expand.grid(
+    n = c(5,7,9)
+  ) %>%
+  mutate(
+    data = map(n, ~tibble(item=1:., rank = gd_rank(1:., alpha=0.1, n=.)))
+  ) %>%
+  unnest(data) %>%
+  mutate(
+    item = item+(7-n)/2,
+    item = map_chr(item, function(i) {
+      LETTERS[i+1]
+    }) %>%
+      factor(levels = LETTERS[1:15]),
+    n = as.character(n)
+  ) %>%
+  ggplot(aes(x=item, y=rank, color=n, group=n)) +
+  geom_line(size=2) +
+  scale_color_viridis_d(begin=0.3, end=0.7) +
+  theme_princti() +
+  labs(y = 'Rank', x = 'Item', color='# Items') +
+  scale_x_discrete(breaks=LETTERS[1:15])
+(fig_alpha + fig_n + fig_gen_alpha +
+  plot_layout(design='12\n33', heights=c(1,2))) &
+  ggplot2::theme(
+        title = ggplot2::element_text(size = 35, family='Helvetica'),
+        text = ggplot2::element_text(size = 35),
+        axis.text = ggplot2::element_text(size = 30),
+        legend.text = ggplot2::element_text(size = 30),
+        strip.text = ggplot2::element_text(size = 35),
+        strip.background = element_blank()
+      )
+ggsave('../../../principles-of-ti/princti/figures/ccn/fig-norm-minimization.pdf', width=25, height=18, unit='cm')
+```
+
+## Regularized regression
+
+```{r}
+fig_reg_a <-
+  expand.grid(
+  c=exp(seq(log(0.001), log(1000), length.out=200)),
+  alpha=alpha
+) %>%
+  as_tibble() %>%
+  mutate(
+    eff_alpha = (alpha+1/c)/(1+1/c)
+  ) %>%
+  ggplot(aes(c,eff_alpha, color=alpha, group=alpha)) +
+  geom_line() +
+  scale_color_viridis_c(option='plasma', end=0.7, limits=c(0., 0.3), direction=-1, breaks = c(0, 0.3)) +
+  theme_princti() +
+  scale_y_continuous(limits = c(0,1), breaks=c(0, 0.5, 1)) +
+  scale_x_log10(breaks = c(1e-2, 1, 1e2), labels = c('0.01', '1', '100')) +
+  labs(x = NULL, y = parse(text='alpha^{eff}'), color = parse(text = 'alpha'))
+fig_reg_a
+```
+
+
+```{r}
+fig_reg_b <-
+  expand.grid(
+  c=exp(seq(log(0.001),log(1000), length.out=200)),
+  alpha=alpha
+) %>%
+  as_tibble() %>%
+  mutate(
+    mem_coeff = alpha/(alpha+1/c)
+  ) %>%
+  ggplot(aes(c,mem_coeff, color=alpha, group=alpha)) +
+  geom_line(show.legend=FALSE) +
+  scale_color_viridis_c(option='plasma', end=0.7, limits=c(0., 0.3), direction=-1, breaks = c(0, 0.3)) +
+  theme_princti() +
+  scale_y_continuous(limits = c(0,1), breaks=c(0, 0.5, 1)) +
+  scale_x_log10(breaks = c(1e-2, 1, 1e2), labels = c('0.01', '1', '100')) +
+  labs(x = 'c', y = 'Mem. coeff.', color = parse(text = 'alpha'))
+fig_reg_b
+```
+
+```{r}
+c_vec <- c(0.01, 1, 10, Inf)
+df_gen_reg <-
+  expand.grid(
+    c=c_vec,
+    j=1:n,
+    k=1:n
+  ) %>%
+  as_tibble() %>%
+  mutate(
+    label = map2_chr(j, k, ~paste0(LETTERS[..1],LETTERS[..2])),
+    symbolic_distance = k-j,
+    margin = reg_margin(j, k, alpha=0.1, n=n, c=c)
+  ) %>%
+  filter(j<k)
+fig_gen_reg <-
+  df_gen_reg %>%
+  mutate(
+    symbolic_distance = if_else(symbolic_distance==1, 'SD: 1', as.character(symbolic_distance)) %>%
+      factor(levels = c('SD: 1', as.character(2:6))),
+    c = factor(c, levels = c_vec)
+  ) %>%
+  ggplot(aes(x = label, y = margin, group=c, alpha=c)) +
+  geom_line(color = viridisLite::plasma(end=0.7, direction=-1, n=4)[2]) +
+  geom_point(show.legend=FALSE, shape=20, color = viridisLite::plasma(end=0.7, direction=-1, n=4)[2]) +
+  facet_grid(~symbolic_distance, scales='free_x', space='free', switch='x') +
+  labs(x = 'Item pair', y = 'Margin', color=parse(text='alpha')) +
+  scale_x_discrete(labels = c()) +
+  theme_princti() +
+  theme(strip.placement = 'outside') +
+  scale_alpha_discrete(range = c(0.4, 1), labels=c('0.01', '1', '10', parse(text='infinity'))) +
+  guides(color='none')
+fig_gen_reg
+```
+
+```{r}
+column_1 <- (fig_reg_a / fig_reg_b) + plot_layout(guides = 'collect')
+fig_reg <-
+  (column_1 | fig_gen_reg) + plot_layout(widths=c(1, 2.5))
+fig_reg <-
+  fig_reg + plot_annotation(tag_levels = 'a')
+fig_reg <-
+  fig_reg &
+  theme(
+    plot.tag = element_text(face = 'bold', size = 8),
+    legend.key.size = unit(4, 'pt'),
+    plot.margin = unit(c(0,0,0,0), 'pt'),
+    legend.box.margin = unit(c(0,0,0,0), 'pt'),
+    legend.box.spacing=unit(0, 'pt')
+  )
+frac <- 0.95*3.5/4.5
+width <- 15.11078
+fig_reg
+ggsave('../figures/fig-nonadditive/fig-reg-raw.pdf', width=frac*width, height=2.5/7*frac*width, units = "cm")
+```
+

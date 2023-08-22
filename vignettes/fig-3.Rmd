@@ -1,0 +1,106 @@
+---
+title: "Figure 3"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Figure 3}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+```{r setup}
+library(princti)
+library(tidyverse)
+library(patchwork)
+library(scico)
+library(RColorBrewer)
+```
+
+```{r}
+fig_rsa <-
+  time_traj_ti_similarity %>% 
+  filter(type == 'before training', scaling == 1., features == 'linear readout') %>%
+  mutate(
+    i1_str = map_chr(i1, ~LETTERS[.+1]),
+    i2_str = map_chr(i2, ~LETTERS[.+1]),
+    j1_str = map_chr(j1, ~LETTERS[.+1]),
+    j2_str = map_chr(j2, ~LETTERS[.+1]),
+    x1 = paste0(i1_str,j1_str) %>%
+      as_factor(),
+    x2 = paste0(i2_str, j2_str) %>%
+      as_factor() %>%
+      fct_rev()
+  ) %>%
+  filter(model_seed == 0, i1<=2, i2<=2, j1<=2, j2<=2) %>%
+  ggplot(aes(x1, x2, fill = sim*14/10000)) +
+  geom_tile() +
+  theme_princti() +
+  coord_equal() +
+  scale_fill_gradient(limits = c(0, NA), low='white', high='black', breaks=c(0,1)) +
+  labs(x = 'Trial 1', y = 'Trial 2', fill = 'Similarity') +
+  theme(axis.text.x = element_text(angle=90, vjust=0.5)) +
+  facet_wrap(~'50,000 Units')
+```
+
+
+## Sampled similarity (Fig. 4b)
+
+```{r}
+kappas <- get_kappas(1, 1)
+df_similarity_theory <-
+  tibble(
+    type = c('distinct', 'overlap', 'same'),
+    similarity = c(kappas[[2]][[2]], kappas[[1]][[2]], 1.)
+  )
+fig_similarity <-
+  princti::similarity %>%
+  filter(hdims %in% c(100, 1000, 50000)) %>%
+  mutate(
+    similarity = similarity*14/hdims,
+    hdims = paste(format(hdims, big.mark = ','), 'Units')
+  ) %>%
+  ggplot(
+    aes(x = similarity, y = ..density.., fill = type, color = type)
+  ) +
+  geom_vline(aes(xintercept = similarity, color = type), data = df_similarity_theory, show.legend = FALSE) +
+  geom_histogram(bins = 100, color=NA, alpha = 1., position = 'identity') +
+  facet_wrap(~hdims, ncol=3, scales='free_y') +
+  theme_princti() +
+  scale_color_manual(values = brewer.pal(5, 'Blues')[3:5], name = 'Type of trials', labels=c('Distinct', 'Overlapping', 'Same')) +
+  scale_fill_manual(values = brewer.pal(5, 'Blues')[3:5], name = 'Type of trials', labels=c('Distinct', 'Overlapping', 'Same')) +
+  scale_x_continuous(name = 'Similarity', breaks = c(0, 0.5, 1), limits=c(0, NA)) +
+  scale_y_continuous(breaks = c(), name = 'Density') +
+  coord_cartesian(xlim = c(NA, 1.25))
+```
+
+```{r}
+fig <- 
+  ((
+  (wrap_elements(grid::textGrob('Network'))+theme_princti()) +
+    (wrap_elements(grid::textGrob('Network 2'))+theme_princti()) +
+    fig_rsa +
+    plot_layout(widths=c(1.5, 2, 1.5)))/
+    (
+  fig_similarity +
+    (wrap_elements(grid::textGrob('Spectrum'))+theme_princti()) +
+    plot_layout(widths = c(3, 2.5))) +
+  plot_annotation(tag_levels = 'a') +
+    plot_layout(heights=c(1.75, 1))) &
+  theme(
+    plot.margin = unit(c(0,0,0,0), 'pt'),
+    legend.key.size = unit(4, 'pt'),
+    legend.box.margin = unit(c(0,0,0,0), 'pt'),
+    legend.box.spacing=unit(0, 'pt')
+  )
+frac <- 0.95
+width <- 15.11078
+fig
+ggsave('../figures/fig-network/fig-network-raw.pdf', width=frac*width, height=3.5/7*frac*width, units = "cm")
+```
+
