@@ -7,7 +7,7 @@ theme_princti <-
     ggplot2::theme_classic() +
       ggplot2::theme(
         title = ggplot2::element_text(size = 8),
-        text = ggplot2::element_text(size = 7),
+        text = ggplot2::element_text(size = 7, family='Helvetica'),
         axis.text = ggplot2::element_text(size = 7),
         legend.text = ggplot2::element_text(size = 7),
         plot.tag = ggplot2::element_text(face = 'bold', size = 8),

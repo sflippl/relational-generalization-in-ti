@@ -1,0 +1,77 @@
+---
+title: "fig-tp"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{fig-tp}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+```{r setup}
+library(princti)
+```
+
+```{r}
+fig_c <-
+  expand.grid(
+    t = seq(0, 50, by=0.01),
+    alpha = c(0.3, 0.1, 0.02, 0.)
+  ) %>%
+  mutate(
+    margin = 1-exp(-alpha*t)
+  ) %>%
+  ggplot(aes(t, margin, color=alpha, group=alpha)) +
+  geom_line() +
+  scale_color_viridis_c(option='plasma', end=0.7, limits=c(0., 0.3), direction=-1, breaks = c(0, 0.3)) +
+  theme_princti() +
+  scale_y_continuous(limits = c(0,1), breaks=c(0, 0.5, 1)) +
+  scale_x_continuous(breaks = c(0, 50)) +
+  labs(x = 'Time', y = 'Margin', color = parse(text = 'alpha'))
+fig_c
+```
+
+```{r}
+fig_d <-
+  tibble(
+    alpha = seq(0, 1, by = 0.01)
+  ) %>%
+  mutate(
+    halftime = log(2)/alpha
+  ) %>%
+  ggplot(aes(alpha, halftime)) +
+  geom_line() +
+  theme_princti() +
+  coord_cartesian(ylim = c(0, 50)) +
+  scale_y_continuous(breaks = c(0, 50)) +
+  scale_x_continuous(breaks = c(0, 1)) +
+  labs(x = parse(text = 'alpha'), y = 'Halftime')
+fig_d
+```
+
+```{r}
+fig <- 
+  (
+  (wrap_elements(grid::textGrob('Network'))+theme_princti()) +
+    (wrap_elements(grid::textGrob('Network 2'))+theme_princti()) +
+    fig_c + fig_d +
+  plot_annotation(tag_levels = 'a') +
+    plot_layout(design='123\n124')) &
+  theme(
+    plot.margin = unit(c(0,0,0,0), 'pt'),
+    legend.key.size = unit(4, 'pt'),
+    legend.box.margin = unit(c(0,0,0,0), 'pt'),
+    legend.box.spacing=unit(0, 'pt')
+  )
+frac <- 0.95
+width <- 15.11078
+fig
+ggsave('../figures/fig-tp/fig-tp-raw.pdf', width=0.5*frac*width, height=2/7*frac*width, units = "cm")
+```
+

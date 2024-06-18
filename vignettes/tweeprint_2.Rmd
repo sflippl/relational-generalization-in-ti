@@ -1,0 +1,118 @@
+---
+title: "tweeprint_2"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{tweeprint_2}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+```{r setup}
+library(princti)
+library(tidyverse)
+library(patchwork)
+library(RColorBrewer)
+```
+
+```{r}
+scaling_levels <- c(
+  'Theory (NTK)',
+  'Lazy',
+  'Rich',
+  'Very rich'
+)
+scaling_palette <- c(
+  'darkgreen',
+  '#1e996fff',
+  '#e5c700ff',
+  '#cc9f28ff'
+)
+```
+
+```{r}
+alpha_ntk <- get_alphas(1,1,0)[[2]]
+df <-
+  time_traj_ti %>%
+  select(epoch, model_seed, j, k, margin, scaling) %>%
+  inner_join(
+    time_traj_ti_lr %>%
+      select(model_seed, scaling, lr) %>%
+      unique()
+  ) %>%
+  mutate(
+    t = epoch*lr/6*(3572-1136),
+    pred = gd_margin(j+1, k+1, t=t, alpha = alpha_ntk),
+    error = (pred-margin)**2,
+    scaling = case_when(
+      scaling == 1 ~ 'Lazy',
+      scaling == 1e-6 ~ 'Rich',
+      abs(log(scaling, base=10)+32)<0.01 ~ 'Very rich'
+    ) %>%
+      factor(
+        levels = scaling_levels
+      )
+  ) %>%
+  select(-lr, -t)
+df_last <-
+  df %>%
+  group_by(model_seed, scaling) %>%
+  summarise(epoch = max(epoch)) %>%
+  inner_join(df)
+df_last <-
+  df_last %>%
+  bind_rows(
+    expand.grid(
+      j = 1:7,
+      k = 1:7
+    ) %>%
+      as_tibble() %>%
+      dplyr::mutate(
+        scaling = 'Theory (NTK)',
+        margin = gd_margin(j, k, alpha=alpha_ntk),
+        j = j-1,
+        k = k-1
+      )
+  ) %>%
+  filter(j != k) %>%
+  mutate(
+      label = map2_chr(j, k, ~paste0(min(LETTERS[..1+1],LETTERS[..2+1]), max(LETTERS[..1+1], LETTERS[..2+1]))),
+      symbolic_distance = abs(k-j),
+      margin = sign(k-j)*margin,
+    symbolic_distance = if_else(symbolic_distance==1, 'SD: 1', as.character(symbolic_distance)) %>%
+      factor(levels = c('SD: 1', as.character(2:6))),
+    correct = if_else(margin > 0, 'yes', 'no')
+  )
+fig_gen <-
+  df_last %>%
+  ggplot(aes(label, margin, group=scaling, color=scaling)) +
+  geom_hline(yintercept = 0, linetype='dashed') +
+  stat_summary(mapping = aes(shape = correct), geom='point', size=1, show.legend = FALSE, data = df_last %>% filter(scaling != 'Theory (NTK)')) +
+  stat_summary(geom='ribbon', alpha=0.3, color=NA, fill='grey80', show.legend=FALSE, fun.ymin = function(x) {mean(x)-sd(x)}, fun.ymax = function(x) {mean(x)+sd(x)}) +
+  stat_summary(geom='line', data = df_last %>% filter(scaling != 'Theory (NTK)'), show.legend = TRUE, size=0.5) +
+  stat_summary(mapping = aes(shape = correct), geom='point', size=1, show.legend = FALSE, data = df_last %>% filter(scaling == 'Theory (NTK)')) +
+  stat_summary(geom='line', data = df_last %>% filter(scaling == 'Theory (NTK)'), show.legend = FALSE, linetype = '11', size=0.5) +
+  facet_grid(~symbolic_distance, scales='free_x', space='free', switch = 'x') +
+  theme_princti() +
+  labs(x = 'Item pair', y = 'Margin', color = NULL, linetype = NULL) +
+  scale_color_manual(values = scaling_palette %>% magrittr::set_names(scaling_levels), drop = FALSE) +
+  scale_y_continuous(breaks = c(0,1,2)) +
+  scale_shape_manual(values = c(yes = 16, no = 1), breaks=NULL) +
+  #scale_x_discrete(labels=c()) +
+  theme(
+    strip.placement = 'outside',
+    axis.text.x = element_text(angle = 90, vjust=0.5),
+    legend.key.size=unit(6, 'pt'),
+    legend.position=c(0.2, 0.8),
+    legend.background = element_blank()
+  )
+fig_gen
+ggsave('../figures/tweeprint_2/fig-rich-gen.png', width=8, height=5, units = "cm")
+```
+

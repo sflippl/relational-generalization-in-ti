@@ -36,6 +36,117 @@ scaling_palette <- c(
 )
 ```
 
+
+```{r}
+get_p1 <- function(n) {
+  if(n==2) {
+    tbl <- expand.grid(
+      item=1:2, order=c('first', 'second')
+    ) %>%
+      as_tibble() %>%
+      mutate(
+        value = if_else(
+          ((item==1) & (order=='first')) | ((item==2) & (order=='second')), 0.5, 0.
+        )
+      )
+  }
+  else{
+    tbl <- get_p1(n-1)
+    if(n%%4==3) {
+      tbl <- bind_rows(
+        tbl, tibble(item = n, order = c('first', 'second'), value=c(-0.5, 0.5))
+      ) %>%
+        mutate(
+          value = case_when(
+            (item==n-2) & (order == 'second') ~ -0.5,
+            (item==n-1) & (order == 'first') ~ 0.5,
+            TRUE ~ value
+          )
+        )
+    }
+    if(n%%4==0){
+      tbl <- bind_rows(
+        tbl, tibble(item = n, order = c('first', 'second'), value=c(-0.5, 0.))
+      )
+    }
+    if(n%%4==1) {
+      tbl <- bind_rows(
+        tbl, tibble(item = n, order = c('first', 'second'), value=c(0., 0.))
+      )
+    }
+    if(n%%4==2) {
+      tbl <- bind_rows(
+        tbl, tibble(item = n, order = c('first', 'second'), value=c(0., 0.5))
+      ) %>%
+        mutate(
+          value = case_when(
+            (item==n-2) & (order == 'second') ~ -0.5,
+            (item==n-1) & (order == 'first') ~ 0.5,
+            TRUE ~ value
+          )
+        )
+    }
+  }
+  tbl %>% arrange(item, order)
+}
+get_p2 <- function(n) {
+  if(n==2) {
+    tbl <- expand.grid(
+      item=1:2, order=c('first', 'second'), value=0.
+    ) %>%
+      as_tibble()
+  }
+  else{
+    tbl <- get_p2(n-1)
+    if(n%%4==1) {
+      tbl <- bind_rows(
+        tbl, tibble(item = n, order = c('first', 'second'), value=c(-0.5, 0.5))
+      ) %>%
+        mutate(
+          value = case_when(
+            (item==n-2) & (order == 'second') ~ -0.5,
+            (item==n-1) & (order == 'first') ~ 0.5,
+            TRUE ~ value
+          )
+        )
+    }
+    if(n%%4==2){
+      tbl <- bind_rows(
+        tbl, tibble(item = n, order = c('first', 'second'), value=c(-0.5, 0.))
+      )
+    }
+    if(n%%4==3) {
+      tbl <- bind_rows(
+        tbl, tibble(item = n, order = c('first', 'second'), value=c(0., 0.))
+      )
+    }
+    if(n%%4==0) {
+      tbl <- bind_rows(
+        tbl, tibble(item = n, order = c('first', 'second'), value=c(0., 0.5))
+      ) %>%
+        mutate(
+          value = case_when(
+            (item==n-2) & (order == 'second') ~ -0.5,
+            (item==n-1) & (order == 'first') ~ 0.5,
+            TRUE ~ value
+          )
+        )
+    }
+  }
+  tbl %>% arrange(item, order)
+}
+get_p_network <- function(n) {
+  p1 <- get_p1(n)
+  p2 <- get_p2(n)
+  bind_rows(
+    p1 %>% mutate(unit='p1+', sign=1),
+    p1 %>% mutate(order = if_else(order=='first', 'second', 'first'), unit='p1-', sign=-1),
+    p2 %>% mutate(unit='p2+', sign=1),
+    p2 %>% mutate(order = if_else(order=='first', 'second', 'first'), unit='p2-', sign=-1)
+  )
+}
+```
+
 ```{r}
 similarity <-
   time_traj_ti_similarity %>%
@@ -303,6 +414,923 @@ fig_gen <-
 ```
 
 ```{r}
+fig_g <-
+  dnn_norms %>%
+  ggplot(aes(sqrt(scaling), l2/sqrt(2))) + # We provided normalized vectors as inputs (i.e. divided by sqrt(2)), but it's easier to describe everything with onehot inputs
+  stat_summary(geom='line') +
+  stat_summary(geom='ribbon', alpha = 0.3, color='transparent', fun.ymin = function(x) {mean(x)-sd(x)}, fun.ymax = function(x) {mean(x)+sd(x)}) +
+  #stat_summary(geom='point') +
+  #geom_point() +
+  scale_x_continuous(
+    trans = scales::trans_new(
+      name = 'reverse_log10',
+      transform = function(x) {-log(x, base=10)},
+      inverse = function(x) {10**(-x)}
+    ),
+    breaks = c(1e-16, 1),
+    labels = c(parse(text='10^{-16}'), '1')
+  ) +
+  labs(x = 'Scale', y = 'L2-norm') +
+  #scale_color_manual(breaks = c('dense', 'symmetric', 'modular'), values = c(scaling_palette[4], hcl.colors(3, palette = 'Dark 3')[c(1,3)])) +
+  scale_y_log10(breaks = c(20, 1e4), labels = c('20', parse(text='10^{4}'))) +
+  theme_princti() +
+  theme(legend.position = c(0.8, 0.8))
+fig_g
+```
+
+```{r}
+fig_h <-
+  inertia %>%
+  filter(symmetric_input_weights == 'False', cl<=10, n==7) %>%
+  mutate(
+    inertia = if_else(cl==0, 1., inertia),
+    scaling = case_when(
+      scaling == '1.0' ~ 'Lazy',
+      scaling == '1e-32' ~ 'Rich'
+    ) %>%
+      factor(
+        levels = scaling_levels
+      )
+  ) %>%
+  ggplot(aes(2*cl, inertia, color=scaling, fill=scaling, group=scaling, fill=scaling)) +
+  stat_summary(geom='ribbon', color=NA, alpha=0.3, show.legend=FALSE, fun.ymin = function(x) mean(x)-3*sd(x), fun.ymax = function(x) mean(x)+3*sd(x)) +
+  stat_summary(geom='line', show.legend=TRUE) +
+  theme_princti() +
+  labs(x = '# Clusters', y = 'Inertia', color = NULL, fill=NULL) +
+  scale_color_manual(values = scaling_palette[2:4], drop = TRUE) +
+  scale_fill_manual(values = scaling_palette[2:4], drop = TRUE) +
+  scale_x_continuous(breaks = c(6, 20)) +
+  scale_y_continuous(breaks = c(0,1))
+fig_h
+```
+
+```{r}
+dat <-
+  clusters %>%
+  filter(symmetric_input_weights=='False', scaling=='1e-32', n==7, n_clusters==3) %>%
+  rename(order=arg) %>%
+  mutate(item=j+1,unit = as.character(1+dim0%%n_clusters), value=array/(2*n_clusters)/sqrt(2)) %>%
+  select(-dim0, -dim1, -n, -array, -j)
+inner_join(
+  dat %>% rename(seed1=seed, unit1=unit, value1=value),
+  dat %>% rename(seed2=seed, unit2=unit, value2=value)
+) %>%
+  group_by(seed1, seed2, unit1, unit2, sign) %>%
+  summarise(
+    mismatch = sum((value1-value2)**2)
+  ) %>%
+  group_by(seed1, seed2, unit1, sign) %>%
+  summarise(unit = unit2[which.min(mismatch)], mismatch=min(mismatch)) %>%
+  filter(seed1!=seed2) %>%
+  ggplot(aes(mismatch)) +
+  geom_histogram()
+assignment <-
+  inner_join(
+    dat %>% rename(seed1=seed, unit1=unit, value1=value),
+    dat %>% rename(seed2=seed, unit2=unit, value2=value)
+  ) %>%
+  group_by(seed1, seed2, unit1, unit2, sign) %>%
+  summarise(
+    mismatch = sum((value1-value2)**2)
+  ) %>%
+  group_by(seed1, seed2, unit1, sign) %>%
+  summarise(unit = unit2[which.min(mismatch)]) %>%
+  filter(seed1==0) %>%
+  ungroup() %>%
+  select(-seed1) %>%
+  rename(std_unit=unit1, seed=seed2)
+assignment
+```
+
+```{r}
+fig_i <-
+  bind_rows(
+    clusters %>%
+      filter(symmetric_input_weights=='False', scaling=='1e-32', n==7, sign==1, n_clusters==3) %>%
+      rename(order=arg) %>%
+      mutate(item=j+1,unit = as.character(1+dim0%%n_clusters), value=array/(2*n_clusters)/sqrt(2)) %>%
+      inner_join(assignment),
+    get_p_network(7) %>%
+      filter(unit %in% c('p1+', 'p2+')) %>%
+      mutate(std_unit = unit)
+  ) %>%
+  mutate(
+    item = map_chr(item, ~LETTERS[.]),
+    assignment = if_else(std_unit %in% c('1', 'p1+'), 'p1+', 'p2+'),
+    unit = factor(unit)
+  ) %>%
+  arrange(desc(unit)) %>%
+  ggplot(aes(item, value, color=factor(std_unit), group=paste(std_unit,order))) +
+  stat_summary(geom='ribbon', color=NA, alpha=0.3, fill='grey', show.legend=FALSE, fun.ymin = function(x) mean(x)-sd(x), fun.ymax = function(x) mean(x)+sd(x)) +
+  stat_summary(geom='line', show.legend=TRUE) +
+  #stat_summary(geom='point', show.legend=FALSE) +
+  facet_grid(assignment~order) +
+  theme_princti() +
+  theme(strip.background = element_blank(),
+  strip.text.x = element_blank()) +
+  scale_color_manual(
+    values = c(c(`p1+` = 'black', `p2+` = 'grey40'), colorspace::qualitative_hcl(h = c(0, 300, c = c(90, 90), l = 50), n=3) %>% magrittr::set_names(1:3))
+  ) +
+  labs(x = 'Item', y = 'Weight', color = 'Unit')
+fig_i
+```
+
+```{r}
+fig_j <-
+  bind_rows(
+    clusters %>%
+      filter(symmetric_input_weights=='False', scaling=='1e-32', n==7, n_clusters==3) %>%
+      rename(order=arg) %>%
+      mutate(item=j+1,unit = as.character(1+dim0%%n_clusters), value=array/(2*n_clusters)/sqrt(2)) %>%
+      inner_join(assignment),
+    get_p_network(7) %>%
+      mutate(std_unit = unit) %>%
+      filter(unit %in% c('p1+', 'p2+'))
+  ) %>%
+  group_by(sign, std_unit, seed) %>%
+  nest() %>%
+  mutate(data = map(data, function(dat) {
+    expand.grid(j1=1:7, j2=1:7) %>%
+      inner_join(
+        dat %>%
+          filter(order=='first') %>%
+          transmute(arr1=value, j1=item)
+      ) %>%
+      inner_join(
+        dat %>%
+          filter(order == 'second') %>%
+          transmute(arr2=value, j2=item)
+      ) %>%
+      mutate(
+        value = arr1+arr2,
+        value = if_else(value>=0, value, 0)
+      ) %>%
+      select(j1, j2, value)
+  })) %>%
+  unnest() %>%
+  mutate(value = sign*value) %>%
+  filter(j2==j1+1) %>%
+  mutate(
+    label = map2_chr(j1, j2, ~paste0(LETTERS[..1], LETTERS[..2])),
+    assignment = if_else(std_unit %in% c('1', 'p1+'), 'p1+', 'p2+'),
+    unit = factor(std_unit)
+  ) %>%
+  ggplot(aes(label, value, color=unit, group=paste(unit,sign), linetype=factor(sign, levels=c(1,-1)))) +
+  stat_summary(geom='ribbon', color=NA, alpha=0.3, fill='grey', show.legend=FALSE, fun.ymin = function(x) mean(x)-sd(x), fun.ymax = function(x) mean(x)+sd(x)) +
+  stat_summary(geom='line', show.legend=TRUE) +
+  #stat_summary(geom='point', show.legend=FALSE) +
+  facet_wrap(~assignment, ncol=1) +
+  theme_princti() +
+  scale_color_manual(
+    values = c(c(`p1+` = 'black', `p2+` = 'grey40'), colorspace::qualitative_hcl(h = c(0, 300, c = c(90, 90), l = 50), n=3) %>% magrittr::set_names(1:3))
+  ) +
+  labs(x = 'Item pair', y = 'Response', color = 'Unit', linetype = 'Unit sign') +
+  theme(axis.text.x = element_text(angle=90), strip.background = element_blank(),
+  strip.text.x = element_blank()) +
+  scale_y_continuous(breaks = c(0, 1)) +
+  guides(color = guide_none())
+fig_j
+```
+
+```{r}
+design <- "1255\n3455\n6667"
+fig_1 <-
+  ((wrap_elements(grid::textGrob('Network'))+theme_princti()) + fig_error + fig_margin + fig_acc + fig_gen) +
+  plot_layout(guides = 'keep', design = '125\n345', widths = c(1,1,2.5))
+fig <-
+  ((fig_1/(
+    ((fig_g / fig_h) | fig_i | fig_j) + plot_layout(nrow=1, widths=c(0.6,2,1))
+  )) +
+  plot_layout(heights = c(2,1)) +
+  plot_annotation(tag_levels = 'a')) &
+  theme(
+    legend.key.size = unit(4, 'pt'),
+    plot.margin = unit(c(0,0,0,0), 'pt'),
+    legend.box.margin = unit(c(0,0,0,0), 'pt'),
+    legend.box.spacing=unit(0, 'pt')
+  )
+frac <- 0.95
+width <- 15.11078
+fig
+ggsave('../figures/fig-rich/fig-rich-raw-v2.pdf', width=frac*width, height=(4.5)/7*frac*width, units = "cm")
+```
+
+
+```{r}
+dat <-
+  clusters %>%
+  filter(symmetric_input_weights=='False', scaling=='1e-32', n==7, n_clusters==3) %>%
+  rename(order=arg) %>%
+  mutate(item=j+1,unit = as.character(1+dim0%%n_clusters), value=array/(2*n_clusters)/sqrt(2)) %>%
+  select(-dim0, -dim1, -n, -array, -j)
+inner_join(
+  dat %>% rename(seed1=seed, unit1=unit, value1=value),
+  dat %>% rename(seed2=seed, unit2=unit, value2=value)
+) %>%
+  group_by(seed1, seed2, unit1, unit2, sign) %>%
+  summarise(
+    mismatch = sum((value1-value2)**2)
+  ) %>%
+  group_by(seed1, seed2, unit1, sign) %>%
+  summarise(unit = unit2[which.min(mismatch)], mismatch=min(mismatch)) %>%
+  filter(seed1!=seed2) %>%
+  ggplot(aes(mismatch)) +
+  geom_histogram()
+assignment <-
+  inner_join(
+    dat %>% rename(seed1=seed, unit1=unit, value1=value),
+    dat %>% rename(seed2=seed, unit2=unit, value2=value)
+  ) %>%
+  group_by(seed1, seed2, unit1, unit2, sign) %>%
+  summarise(
+    mismatch = sum((value1-value2)**2)
+  ) %>%
+  group_by(seed1, seed2, unit1, sign) %>%
+  summarise(unit = unit2[which.min(mismatch)]) %>%
+  filter(seed1==0) %>%
+  ungroup() %>%
+  select(-seed1) %>%
+  rename(std_unit=unit1, seed=seed2)
+assignment
+```
+
+```{r}
+fig_c_1_1 <-
+  clusters %>%
+    filter(symmetric_input_weights=='False', scaling=='1e-32', n==7, sign==1, n_clusters==3) %>%
+    rename(order=arg) %>%
+    mutate(item=j+1,unit = as.character(1+dim0%%n_clusters), value=array/(2*n_clusters)/sqrt(2)) %>%
+    inner_join(assignment) %>%
+  mutate(
+    item = map_chr(item, ~LETTERS[.]),
+    assignment = if_else(std_unit %in% c('1', 'p1+'), 'p1+', 'p2+'),
+    unit = factor(unit),
+    order = if_else(order == 'first', 'first item', 'second item')
+  ) %>%
+  filter(order == 'first item') %>%
+  arrange(desc(unit)) %>%
+  ggplot(aes(item, value, color=factor(std_unit), group=paste(std_unit,order))) +
+  stat_summary(geom='ribbon', color=NA, alpha=0.3, fill='grey', show.legend=FALSE, fun.ymin = function(x) mean(x)-sd(x), fun.ymax = function(x) mean(x)+sd(x)) +
+  stat_summary(geom='line', show.legend=TRUE) +
+  #stat_summary(geom='point', show.legend=FALSE) +
+  theme_princti() +
+  scale_color_manual(
+    values = c(colorspace::qualitative_hcl(h = c(0, 240, c = c(90, 90), l = 50), n=3))
+  ) +
+  guides(color=guide_none()) +
+  labs(x = 'Item 1', y = 'Weight', color = 'Unit') +
+  scale_y_continuous(breaks=c(-0.5, 0, 0.5))
+fig_c_1_2 <-
+  clusters %>%
+    filter(symmetric_input_weights=='False', scaling=='1e-32', n==7, sign==1, n_clusters==3) %>%
+    rename(order=arg) %>%
+    mutate(item=j+1,unit = as.character(1+dim0%%n_clusters), value=array/(2*n_clusters)/sqrt(2)) %>%
+    inner_join(assignment) %>%
+  mutate(
+    item = map_chr(item, ~LETTERS[.]),
+    assignment = if_else(std_unit %in% c('1', 'p1+'), 'p1+', 'p2+'),
+    unit = factor(unit),
+    order = if_else(order == 'first', 'first item', 'second item')
+  ) %>%
+  filter(order == 'second item') %>%
+  arrange(desc(unit)) %>%
+  ggplot(aes(item, value, color=factor(std_unit), group=paste(std_unit,order))) +
+  stat_summary(geom='ribbon', color=NA, alpha=0.3, fill='grey', show.legend=FALSE, fun.ymin = function(x) mean(x)-sd(x), fun.ymax = function(x) mean(x)+sd(x)) +
+  stat_summary(geom='line', show.legend=TRUE) +
+  #stat_summary(geom='point', show.legend=FALSE) +
+  theme_princti() +
+  scale_color_manual(
+    values = c(colorspace::qualitative_hcl(h = c(0, 240, c = c(90, 90), l = 50), n=3))
+  ) +
+  guides(color=guide_none()) +
+  labs(x = 'Item 2', y = 'Weight', color = 'Unit') +
+  scale_y_continuous(breaks=c(-0.5, 0, 0.5))
+fig_c_1 <- fig_c_1_1 / fig_c_1_2
+fig_c_1
+```
+
+```{r}
+fig_c_2 <-
+  clusters %>%
+  filter(symmetric_input_weights=='False', scaling=='1e-32', n==7, n_clusters==3) %>%
+  rename(order=arg) %>%
+  mutate(item=j+1,unit = as.character(1+dim0%%n_clusters), value=array/(2*n_clusters)/sqrt(2)) %>%
+  inner_join(assignment) %>%
+  group_by(sign, std_unit, seed) %>%
+  nest() %>%
+  mutate(data = map(data, function(dat) {
+    expand.grid(j1=1:7, j2=1:7) %>%
+      inner_join(
+        dat %>%
+          filter(order=='first') %>%
+          transmute(arr1=value, j1=item)
+      ) %>%
+      inner_join(
+        dat %>%
+          filter(order == 'second') %>%
+          transmute(arr2=value, j2=item)
+      ) %>%
+      mutate(
+        value = arr1+arr2,
+        value = if_else(value>=0, value, 0)
+      ) %>%
+      select(j1, j2, value)
+  })) %>%
+  unnest() %>%
+  mutate(value = sign*value) %>%
+  filter(j2==j1+1) %>%
+  mutate(
+    label = map2_chr(j1, j2, ~paste0(LETTERS[..1], LETTERS[..2])),
+    assignment = if_else(std_unit %in% c('1', 'p1+'), 'p1+', 'p2+'),
+    unit = factor(std_unit)
+  ) %>%
+  ggplot(aes(label, value, color=unit, group=paste(unit,sign), linetype=factor(sign, levels=c(1,-1)))) +
+  stat_summary(geom='ribbon', color=NA, alpha=0.3, fill='grey', show.legend=FALSE, fun.ymin = function(x) mean(x)-sd(x), fun.ymax = function(x) mean(x)+sd(x)) +
+  stat_summary(geom='line', show.legend=TRUE) +
+  #stat_summary(geom='point', show.legend=FALSE) +
+  theme_princti() +
+  scale_color_manual(
+    values = c(c(`p1+` = 'black', `p2+` = 'grey40'), colorspace::qualitative_hcl(h = c(0, 240, c = c(90, 90), l = 50), n=3) %>% magrittr::set_names(1:3))
+  ) +
+  labs(x = 'Item pair', y = 'Response', color = 'Unit', linetype = 'Unit sign') +
+  theme(axis.text.x = element_text(angle=90, vjust=0.5), strip.background = element_blank(),
+  strip.text.x = element_blank()) +
+  scale_y_continuous(breaks = c(0, 1)) +
+  guides(color = guide_none())
+fig_c_2
+```
+
+```{r}
+colorspace::qualitative_hcl(h = c(0, 300, c = c(90, 90), l = 50), n=3)
+```
+
+```{r}
+colorspace::qualitative_hcl(h = c(0, 300, c = c(90, 90), l = 50), n=4)
+```
+
+```{r}
+fig_8_c <-
+  (wrap_elements(grid::textGrob('Network'))+theme_princti()) + fig_c_1 + fig_c_2 + plot_layout(design='12\n32')
+fig_8_c
+```
+
+```{r}
+fig_d_1_1 <-
+  get_p_network(7) %>%
+      filter(unit %in% c('p1+', 'p2+')) %>%
+      mutate(std_unit = unit) %>%
+  mutate(
+    item = map_chr(item, ~LETTERS[.]),
+    assignment = if_else(std_unit %in% c('1', 'p1+'), 'p1+', 'p2+'),
+    unit = factor(unit),
+    order = if_else(order == 'first', 'first item', 'second item')
+  ) %>%
+  arrange(desc(unit)) %>%
+  filter(order == 'first item') %>%
+  ggplot(aes(item, value, color=factor(std_unit), group=paste(std_unit,order))) +
+  stat_summary(geom='ribbon', color=NA, alpha=0.3, fill='grey', show.legend=FALSE, fun.ymin = function(x) mean(x)-sd(x), fun.ymax = function(x) mean(x)+sd(x)) +
+  stat_summary(geom='line', show.legend=TRUE) +
+  #stat_summary(geom='point', show.legend=FALSE) +
+  facet_wrap(~order, ncol=1) +
+  theme_princti() +
+  scale_color_manual(
+    values = c('black', 'grey40')
+  ) +
+  guides(color=guide_none()) +
+  labs(x = 'Item 1', y = 'Weight', color = 'Unit') +
+  scale_y_continuous(breaks=c(-0.5, 0, 0.5))
+fig_d_1_2 <-
+  get_p_network(7) %>%
+      filter(unit %in% c('p1+', 'p2+')) %>%
+      mutate(std_unit = unit) %>%
+  mutate(
+    item = map_chr(item, ~LETTERS[.]),
+    assignment = if_else(std_unit %in% c('1', 'p1+'), 'p1+', 'p2+'),
+    unit = factor(unit),
+    order = if_else(order == 'first', 'first item', 'second item')
+  ) %>%
+  filter(order == 'second item') %>%
+  arrange(desc(unit)) %>%
+  ggplot(aes(item, value, color=factor(std_unit), group=paste(std_unit,order))) +
+  stat_summary(geom='ribbon', color=NA, alpha=0.3, fill='grey', show.legend=FALSE, fun.ymin = function(x) mean(x)-sd(x), fun.ymax = function(x) mean(x)+sd(x)) +
+  stat_summary(geom='line', show.legend=TRUE) +
+  #stat_summary(geom='point', show.legend=FALSE) +
+  theme_princti() +
+  scale_color_manual(
+    values = c('black', 'grey40')
+  ) +
+  guides(color=guide_none()) +
+  labs(x = 'Item 2', y = 'Weight', color = 'Unit') +
+  scale_y_continuous(breaks=c(-0.5, 0, 0.5))
+fig_d_1 <-
+  fig_d_1_1 / fig_d_1_2
+fig_d_1
+```
+
+```{r}
+fig_d_2 <-
+  get_p_network(7) %>%
+      filter(unit %in% c('p1+', 'p2+')) %>%
+      mutate(std_unit = unit) %>%
+  group_by(sign, std_unit) %>%
+  nest() %>%
+  mutate(data = map(data, function(dat) {
+    expand.grid(j1=1:7, j2=1:7) %>%
+      inner_join(
+        dat %>%
+          filter(order=='first') %>%
+          transmute(arr1=value, j1=item)
+      ) %>%
+      inner_join(
+        dat %>%
+          filter(order == 'second') %>%
+          transmute(arr2=value, j2=item)
+      ) %>%
+      mutate(
+        value = arr1+arr2,
+        value = if_else(value>=0, value, 0)
+      ) %>%
+      select(j1, j2, value)
+  })) %>%
+  unnest() %>%
+  mutate(value = sign*value) %>%
+  filter(j2==j1+1) %>%
+  mutate(
+    label = map2_chr(j1, j2, ~paste0(LETTERS[..1], LETTERS[..2])),
+    assignment = if_else(std_unit %in% c('1', 'p1+'), 'p1+', 'p2+'),
+    unit = factor(std_unit)
+  ) %>%
+  ggplot(aes(label, value, color=unit, group=paste(unit,sign), linetype=factor(sign, levels=c(1,-1)))) +
+  stat_summary(geom='ribbon', color=NA, alpha=0.3, fill='grey', show.legend=FALSE, fun.ymin = function(x) mean(x)-sd(x), fun.ymax = function(x) mean(x)+sd(x)) +
+  stat_summary(geom='line', show.legend=TRUE) +
+  #stat_summary(geom='point', show.legend=FALSE) +
+  theme_princti() +
+  scale_color_manual(
+    values = c(c(`p1+` = 'black', `p2+` = 'grey40'), colorspace::qualitative_hcl(h = c(0, 300, c = c(90, 90), l = 50), n=3) %>% magrittr::set_names(1:3))
+  ) +
+  labs(x = 'Item pair', y = 'Response', color = 'Unit', linetype = 'Unit sign') +
+  theme(axis.text.x = element_text(angle=90, vjust=0.5), strip.background = element_blank(),
+  strip.text.x = element_blank()) +
+  scale_y_continuous(breaks = c(0, 1)) +
+  guides(color = guide_none())
+fig_d_2
+```
+
+```{r}
+fig_8_d <-
+  (wrap_elements(grid::textGrob('Network'))+theme_princti()) + fig_d_1 + fig_d_2 + plot_layout(design='12\n32')
+fig_8_d
+```
+
+```{r}
+fig_8_f <-
+  bind_rows(
+  dnn_norms_2 %>%
+    mutate(
+      type = if_else(symmetric_input_weights=='True', 'symmetric', 'standard'),
+      network='empirical',
+      norm = l2/sqrt(2)
+    ),
+  tibble(
+    n = 5:15
+  ) %>%
+    mutate(
+      data = map(
+        n,
+        function(n) {
+          get_p_network(n) %>%
+          mutate(network='hand-constructed', type = 'periodic')
+        }
+      )
+    ) %>%
+    unnest() %>%
+    group_by(network, unit, n, type) %>%
+    summarise(norm = sqrt(sum(value**2))) %>%
+    group_by(network, n, type) %>%
+    summarise(norm = 2*sum(norm)),
+  tibble(n = 5:15, norm = 2*sqrt(6)/3*sqrt((5:15)*((5:15)**2-1)), network='hand-constructed', type='rank')
+) %>%
+  filter(type != 'symmetric') %>%
+  ggplot(aes(n, norm, color = type, group=paste(type, network))) + 
+  stat_summary(geom='ribbon', color=NA, alpha=0.3, show.legend=FALSE, fun.ymin = function(x) mean(x)-sd(x), fun.ymax = function(x) mean(x)+sd(x)) +
+  stat_summary(geom='line', show.legend=TRUE) +
+  theme_princti() +
+  scale_color_manual(
+    values = c(rank = 'darkorchid4', periodic = 'black', standard = '#cc9f28ff'),
+    breaks = c('standard', 'periodic', 'rank'),
+    labels = c('empirical', 'hand-constructed', 'rank')
+  ) +
+  labs(x = 'n', y = 'Norm', linetype=NULL, color=NULL) +
+  scale_x_continuous(breaks = c(5,10,15)) +
+  scale_y_continuous(breaks=c(25, 75))
+fig_8_f
+```
+
+```{r}
+fig_8_e <-
+  expand.grid(
+    item = 1:7,
+    order = c('first', 'second')
+  ) %>%
+  tibble() %>%
+  mutate(
+    value = if_else(order == 'first', 1, -1)*(3:-3)
+  ) %>%
+  ggplot(aes(item, value, linetype = order)) +
+  geom_line(color='darkorchid4') +
+  theme_princti() +
+  scale_linetype_manual(values = c('solid', '11')) +
+  scale_x_continuous(breaks = 1:7, labels = c('A', '', '', 'D', '', '', 'G'), minor_breaks = 1:7) +
+  labs(x = 'Item', y = 'Weight')
+fig_8_e
+```
+
+```{r}
+row_1 <- ((fig_g/fig_h)|fig_8_c) + plot_layout(widths=c(0.6, 2))
+row_2 <- (fig_8_d|(fig_8_e/fig_8_f)) + plot_layout(widths=c(2, 0.6))
+((row_1/row_2) +
+  plot_annotation(tag_levels = c('a',''))) &
+  theme(
+    legend.key.size = unit(4, 'pt'),
+    plot.margin = unit(c(0,0,0,0), 'pt'),
+    legend.box.margin = unit(c(0,0,0,0), 'pt'),
+    legend.box.spacing=unit(0, 'pt'), 
+    legend.position=c(1,1), strip.background = element_blank(),
+  strip.text.x = element_blank()
+  )
+frac <- 0.95
+width <- 15.11078
+ggsave('../figures/fig-rich/fig-rich-revision-v2-raw.pdf', width=frac*width*0.6, height=4/7*frac*width, units = "cm")
+```
+
+
+```{r}
+fig_i <-
+  bind_rows(
+    clusters %>%
+      filter(symmetric_input_weights=='False', scaling=='1e-32', n==7, sign==1, n_clusters==3) %>%
+      rename(order=arg) %>%
+      mutate(item=j+1,unit = as.character(1+dim0%%n_clusters), value=array/(2*n_clusters)/sqrt(2)) %>%
+      inner_join(assignment),
+    get_p_network(7) %>%
+      filter(unit %in% c('p1+', 'p2+')) %>%
+      mutate(std_unit = unit)
+  ) %>%
+  mutate(
+    item = map_chr(item, ~LETTERS[.]),
+    assignment = if_else(std_unit %in% c('1', 'p1+'), 'p1+', 'p2+'),
+    unit = factor(unit)
+  ) %>%
+  arrange(desc(unit)) %>%
+  ggplot(aes(item, value, color=factor(std_unit), group=paste(std_unit,order))) +
+  stat_summary(geom='ribbon', color=NA, alpha=0.3, fill='grey', show.legend=FALSE, fun.ymin = function(x) mean(x)-sd(x), fun.ymax = function(x) mean(x)+sd(x)) +
+  stat_summary(geom='line', show.legend=TRUE) +
+  #stat_summary(geom='point', show.legend=FALSE) +
+  facet_grid(assignment~order) +
+  theme_princti() +
+  theme(strip.background = element_blank(),
+  strip.text.x = element_blank()) +
+  scale_color_manual(
+    values = c(c(`p1+` = 'black', `p2+` = 'grey40'), colorspace::qualitative_hcl(h = c(0, 300, c = c(90, 90), l = 50), n=3) %>% magrittr::set_names(1:3))
+  ) +
+  labs(x = 'Item', y = 'Weight', color = 'Unit')
+fig_i
+```
+
+```{r}
+fig_j <-
+  bind_rows(
+    clusters %>%
+      filter(symmetric_input_weights=='False', scaling=='1e-32', n==7, n_clusters==3) %>%
+      rename(order=arg) %>%
+      mutate(item=j+1,unit = as.character(1+dim0%%n_clusters), value=array/(2*n_clusters)/sqrt(2)) %>%
+      inner_join(assignment),
+    get_p_network(7) %>%
+      mutate(std_unit = unit) %>%
+      filter(unit %in% c('p1+', 'p2+'))
+  ) %>%
+  group_by(sign, std_unit, seed) %>%
+  nest() %>%
+  mutate(data = map(data, function(dat) {
+    expand.grid(j1=1:7, j2=1:7) %>%
+      inner_join(
+        dat %>%
+          filter(order=='first') %>%
+          transmute(arr1=value, j1=item)
+      ) %>%
+      inner_join(
+        dat %>%
+          filter(order == 'second') %>%
+          transmute(arr2=value, j2=item)
+      ) %>%
+      mutate(
+        value = arr1+arr2,
+        value = if_else(value>=0, value, 0)
+      ) %>%
+      select(j1, j2, value)
+  })) %>%
+  unnest() %>%
+  mutate(value = sign*value) %>%
+  filter(j2==j1+1) %>%
+  mutate(
+    label = map2_chr(j1, j2, ~paste0(LETTERS[..1], LETTERS[..2])),
+    assignment = if_else(std_unit %in% c('1', 'p1+'), 'p1+', 'p2+'),
+    unit = factor(std_unit)
+  ) %>%
+  ggplot(aes(label, value, color=unit, group=paste(unit,sign), linetype=factor(sign, levels=c(1,-1)))) +
+  stat_summary(geom='ribbon', color=NA, alpha=0.3, fill='grey', show.legend=FALSE, fun.ymin = function(x) mean(x)-sd(x), fun.ymax = function(x) mean(x)+sd(x)) +
+  stat_summary(geom='line', show.legend=TRUE) +
+  #stat_summary(geom='point', show.legend=FALSE) +
+  facet_wrap(~assignment, ncol=1) +
+  theme_princti() +
+  scale_color_manual(
+    values = c(c(`p1+` = 'black', `p2+` = 'grey40'), colorspace::qualitative_hcl(h = c(0, 300, c = c(90, 90), l = 50), n=3) %>% magrittr::set_names(1:3))
+  ) +
+  labs(x = 'Item pair', y = 'Response', color = 'Unit', linetype = 'Unit sign') +
+  theme(axis.text.x = element_text(angle=90), strip.background = element_blank(),
+  strip.text.x = element_blank()) +
+  scale_y_continuous(breaks = c(0, 1)) +
+  guides(color = guide_none())
+fig_j
+```
+
+
+
+```{r}
+inertia %>%
+  filter(symmetric_input_weights == 'False', cl<=10, n==7) %>%
+  mutate(
+    inertia = if_else(cl==0, 1., inertia),
+    scaling = case_when(
+      scaling == '1.0' ~ 'Lazy',
+      scaling == '1e-32' ~ 'Rich'
+    ) %>%
+      factor(
+        levels = scaling_levels
+      )
+  ) %>%
+  ggplot(aes(2*cl, mismatch, color=scaling, fill=scaling, group=scaling, fill=scaling)) +
+  stat_summary(geom='ribbon', color=NA, alpha=0.3, show.legend=FALSE, fun.ymin = function(x) mean(x)-sd(x), fun.ymax = function(x) mean(x)+sd(x)) +
+  stat_summary(geom='line', show.legend=TRUE) +
+  theme_princti() +
+  labs(x = '# Clusters', y = 'Inertia', color = NULL, fill=NULL) +
+  scale_color_manual(values = scaling_palette[2:4], drop = TRUE) +
+  scale_fill_manual(values = scaling_palette[2:4], drop = TRUE) +
+  scale_x_continuous(breaks = c(6, 20)) +
+  scale_y_log10()
+```
+
+
+```{r}
+get_p_network(7) %>%
+  filter(unit %in% c('p1+', 'p2+')) %>%
+  ggplot(aes(item, value, alpha=order, fill=unit)) +
+  geom_col(position='dodge')
+```
+
+```{r}
+bind_rows(
+  clusters %>%
+    filter(symmetric_input_weights=='False', scaling=='1e-32', n==7, sign==1, n_clusters==3, seed==0) %>%
+    rename(order=arg) %>%
+    mutate(item=j+1,unit = as.character(1+dim0%%n_clusters), value=array/(2*n_clusters)/sqrt(2)),
+  get_p_network(7) %>%
+    filter(unit %in% c('p1+', 'p2+'))
+) %>%
+  ggplot(aes(item, value, color=factor(unit), linetype=order)) +
+  geom_point() +
+  geom_line() +
+  facet_grid(order~(unit%in%c('1', 'p1+')))
+```
+
+
+
+
+```{r}
+bind_rows(
+  clusters %>%
+    filter(symmetric_input_weights=='False', scaling=='1e-32', n==15, sign==1, n_clusters==3, seed==1) %>%
+    rename(order=arg) %>%
+    mutate(item=j+1,unit = as.character(1+dim0%%n_clusters), value=array/(2*n_clusters)/sqrt(2)),
+  get_p_network(15) %>%
+    filter(unit %in% c('p1+', 'p2+'))
+) %>%
+  ggplot(aes(item, value, color=factor(unit), linetype=order)) +
+  geom_point() +
+  geom_line() +
+  facet_grid(order~(unit%in%c('1', 'p1+')))
+```
+
+
+```{r}
+bind_rows(
+  clusters %>%
+    filter(symmetric_input_weights=='False', scaling=='1e-32', n==7, n_clusters==3, seed==0) %>%
+    rename(order=arg) %>%
+    mutate(item=j+1,unit = as.character(1+dim0%%n_clusters), value=array/(2*n_clusters)/sqrt(2), network='empirical'),
+  get_p_network(7) %>%
+    mutate(network='hand-constructed')
+) %>%
+  group_by(sign, unit, network) %>%
+  nest() %>%
+  mutate(data = map(data, function(dat) {
+    expand.grid(j1=1:7, j2=1:7) %>%
+      inner_join(
+        dat %>%
+          filter(order=='first') %>%
+          transmute(arr1=value, j1=item)
+      ) %>%
+      inner_join(
+        dat %>%
+          filter(order == 'second') %>%
+          transmute(arr2=value, j2=item)
+      ) %>%
+      mutate(
+        value = arr1+arr2,
+        value = if_else(value>=0, value, 0)
+      ) %>%
+      select(j1, j2, value)
+  })) %>%
+  unnest() %>%
+  mutate(value = sign*value) %>%
+  filter(j2==j1+1) %>%
+  mutate(
+    label = map2_chr(j1, j2, ~paste0(LETTERS[..1], LETTERS[..2]))
+  ) %>%
+  ggplot(aes(label, value, color=unit, group=paste(unit,sign), linetype=factor(sign, levels=c(1,-1)))) +
+  geom_line() +
+  facet_wrap(~network)
+```
+
+```{r}
+bind_rows(
+  clusters %>%
+    filter(symmetric_input_weights=='False', scaling=='1e-32', n==15, n_clusters==3, seed==1) %>%
+    rename(order=arg) %>%
+    mutate(item=j+1,unit = as.character(1+dim0%%n_clusters), value=array/(2*n_clusters)/sqrt(2), network='empirical'),
+  get_p_network(15) %>%
+    mutate(network='hand-constructed', n = 15)
+) %>%
+  group_by(sign, unit, network, n) %>%
+  nest() %>%
+  mutate(data = map2(data, n, function(dat, n) {
+    expand.grid(j1=1:n, j2=1:n) %>%
+      inner_join(
+        dat %>%
+          filter(order=='first') %>%
+          transmute(arr1=value, j1=item)
+      ) %>%
+      inner_join(
+        dat %>%
+          filter(order == 'second') %>%
+          transmute(arr2=value, j2=item)
+      ) %>%
+      mutate(
+        value = arr1+arr2,
+        value = if_else(value>=0, value, 0)
+      ) %>%
+      select(j1, j2, value)
+  })) %>%
+  unnest() %>%
+  mutate(value = sign*value) %>%
+  filter(j2==j1+1) %>%
+  mutate(
+    label = map2_chr(j1, j2, ~paste0(LETTERS[..1], LETTERS[..2]))
+  ) %>%
+  ggplot(aes(label, value, color=unit, group=paste(unit,sign), linetype=factor(sign, levels=c(1,-1)))) +
+  geom_line() +
+  facet_wrap(~network)
+```
+
+
+```{r}
+dat <-
+  bind_rows(
+  clusters %>%
+    filter(symmetric_input_weights=='False', scaling=='1e-32', n==7, n_clusters==3, seed==0) %>%
+    rename(order=arg) %>%
+    mutate(item=j+1,unit = as.character(1+dim0%%n_clusters), value=array/(2*n_clusters)/sqrt(2), network='empirical'),
+  get_p_network(7) %>%
+    mutate(network='hand-constructed')
+) %>%
+  group_by(sign, unit, network) %>%
+  nest() %>%
+  mutate(data = map(data, function(dat) {
+    expand.grid(j1=1:7, j2=1:7) %>%
+      inner_join(
+        dat %>%
+          filter(order=='first') %>%
+          transmute(arr1=value, j1=item)
+      ) %>%
+      inner_join(
+        dat %>%
+          filter(order == 'second') %>%
+          transmute(arr2=value, j2=item)
+      ) %>%
+      mutate(
+        value = arr1+arr2,
+        value = if_else(value>=0, value, 0)
+      ) %>%
+      select(j1, j2, value)
+  })) %>%
+  unnest() %>%
+  mutate(value = sign*value)
+bind_rows(
+    dat, 
+    dat %>%
+      group_by(network, j1, j2) %>%
+      summarise(value=sum(value)) %>%
+      mutate(unit = 'sum', sign=1)
+  ) %>%
+  filter(j2>j1) %>%
+  mutate(
+    label = map2_chr(j1, j2, ~paste0(LETTERS[..1], LETTERS[..2]))
+  ) %>%
+  ggplot(aes(label, value, color=unit, group=paste(unit,sign), linetype=factor(sign, levels=c(1,-1)))) +
+  geom_line() +
+  facet_grid(network~abs(j1-j2), space = 'free_x', scales = 'free_x')
+```
+
+```{r}
+dat <-
+  bind_rows(
+  clusters %>%
+    filter(symmetric_input_weights=='False', scaling=='1e-32', n==15, n_clusters==3, seed==1) %>%
+    rename(order=arg) %>%
+    mutate(item=j+1,unit = as.character(1+dim0%%n_clusters), value=array/(2*n_clusters)/sqrt(2), network='empirical'),
+  get_p_network(15) %>%
+    mutate(network='hand-constructed', n=15)
+) %>%
+  group_by(sign, unit, network, n) %>%
+  nest() %>%
+  mutate(data = map2(data, n, function(dat, n) {
+    expand.grid(j1=1:n, j2=1:n) %>%
+      inner_join(
+        dat %>%
+          filter(order=='first') %>%
+          transmute(arr1=value, j1=item)
+      ) %>%
+      inner_join(
+        dat %>%
+          filter(order == 'second') %>%
+          transmute(arr2=value, j2=item)
+      ) %>%
+      mutate(
+        value = arr1+arr2,
+        value = if_else(value>=0, value, 0)
+      ) %>%
+      select(j1, j2, value)
+  })) %>%
+  unnest() %>%
+  mutate(value = sign*value)
+bind_rows(
+    dat, 
+    dat %>%
+      group_by(network, j1, j2) %>%
+      summarise(value=sum(value)) %>%
+      mutate(unit = 'sum', sign=1)
+  ) %>%
+  filter(j2>j1) %>%
+  mutate(
+    label = map2_chr(j1, j2, ~paste0(LETTERS[..1], LETTERS[..2]))
+  ) %>%
+  ggplot(aes(label, value, color=unit, group=paste(unit,sign), linetype=factor(sign, levels=c(1,-1)))) +
+  geom_line() +
+  facet_grid(network~abs(j1-j2), space = 'free_x', scales = 'free_x')
+```
+
+
+```{r}
+bind_rows(
+  clusters %>%
+    filter(symmetric_input_weights=='False', scaling=='1e-32', n==7, sign==1, n_clusters==3, seed==0) %>%
+    rename(order=arg) %>%
+    mutate(item=j+1,unit = as.character(1+dim0%%n_clusters), value=array/(2*n_clusters)/sqrt(2), network='empirical'),
+  get_p_network(7) %>%
+    filter(unit %in% c('p1+', 'p2+')) %>%
+    mutate(network='hand-constructed')
+) %>%
+  group_by(network, unit) %>%
+  summarise(norm = sqrt(sum(value**2)))
+```
+
+```{r}
+bind_rows(
+  clusters %>%
+    filter(symmetric_input_weights=='False', scaling=='1e-32', n==7, sign==-1, n_clusters==3, seed==0) %>%
+    rename(order=arg) %>%
+    mutate(item=j+1,unit = as.character(1+dim0%%n_clusters), value=array/6/sqrt(2)),
+  get_p_network(7) %>%
+    filter(unit %in% c('p1-', 'p2-'))
+) %>%
+  ggplot(aes(item, value, color=factor(unit), linetype=order)) +
+  geom_point() +
+  geom_line() +
+  facet_grid(order~(unit%in%c('1', 'p1-')))
+```
+
+
+```{r}
 design <- "1255\n3455\n6667"
 fig_1 <-
   ((wrap_elements(grid::textGrob('Network'))+theme_princti()) + fig_error + fig_margin + fig_acc + fig_gen) +
@@ -321,4 +1349,222 @@ frac <- 0.95
 width <- 15.11078
 fig
 ggsave('../figures/fig-rich/fig-rich-raw.pdf', width=frac*width, height=4.5/7*frac*width, units = "cm")
+```
+
+```{r}
+fig_k <-
+  bind_rows(
+    dnn_norms %>% filter(scaling == 1e-16) %>%
+      mutate(type = case_when(
+        weight_structure == 'dense' ~ 'Standard',
+        weight_structure == 'symmetric' ~ 'Symmetric/O-network',
+        weight_structure == 'modular' ~ 'Modular/R-network'
+      ), type2 = 'Trained networks') %>%
+      rename(norm = l2),
+    inertia %>%
+      filter(weight_structure=='dense', cl==3, scaling==1e-16) %>%
+      mutate(
+        type = 'Standard',
+        type2 = 'Schematic networks'
+      ),
+    tibble(
+      type = c('Symmetric/O-network', 'Modular/R-network'),
+      norm = 8*sqrt(14),
+      type2 = 'Schematic networks'
+    )
+  ) %>%
+  mutate(
+    type = factor(type, levels = c('Standard', 'Symmetric/O-network', 'Modular/R-network')),
+    type2 = factor(type2, levels = c('Trained networks', 'Schematic networks'))
+  ) %>%
+  ggplot(aes(x = type2, y = norm, fill = type)) +
+  stat_summary(geom='col', position = 'dodge') +
+  scale_fill_manual(
+    breaks = c('Standard', 'Symmetric/O-network', 'Modular/R-network'), 
+    values = c(scaling_palette[4], hcl.colors(3, 'Dark 3')[c(1,3)]),
+    labels = c('Standard', 'Symmetric/\nO-network', 'Modular/\nR-network')
+  ) +
+  theme_princti() +
+  labs(x = 'Network type', y = 'Norm', fill = NULL) +
+  scale_y_continuous(breaks = c(0, 50)) +
+  scale_x_discrete(labels = c('Trained', 'Schematic'))
+fig_k
+```
+
+```{r}
+clusters %>%
+  filter(seed==0, n_clusters==3, scaling==1e-16, weight_structure=='dense') %>%
+  mutate(array = array/2/sqrt(2)/n_clusters, cl_dim = dim0 %% n_clusters) %>%
+  group_by(sign, cl_dim) %>%
+  nest() %>%
+  mutate(data = map(data, function(dat) {
+    expand.grid(j1=0:6, j2=0:6) %>%
+      inner_join(
+        dat %>%
+          filter(arg=='first') %>%
+          transmute(arr1=array, j1=j)
+      ) %>%
+      inner_join(
+        dat %>%
+          filter(arg == 'second') %>%
+          transmute(arr2=array, j2=j)
+      ) %>%
+      mutate(
+        value = arr1+arr2,
+        value = if_else(value>=0, value, 0)
+      ) %>%
+      select(j1, j2, value)
+  })) %>%
+  unnest() %>%
+  mutate(
+    value = sign*value,
+    label = map2_chr(j1, j2, ~paste0(min(LETTERS[..1+1],LETTERS[..2+1]), max(LETTERS[..1+1], LETTERS[..2+1]))),
+    symbolic_distance=abs(j2-j1),
+    j1 = map_chr(j1, ~LETTERS[.+1]),
+    j2 = map_chr(j2, ~LETTERS[.+1])
+  ) %>%
+  ggplot(aes(j1, j2, fill = value)) +
+  geom_tile() +
+  facet_grid(sign~cl_dim) +
+  scico::scale_fill_scico(palette='vik')
+```
+
+```{r}
+clusters %>%
+  filter(seed==0, n_clusters==3, scaling==1e-16, weight_structure=='dense', sign==1) %>%
+  mutate(array = array/2/sqrt(2)/n_clusters, cl_dim = dim0 %% n_clusters) %>%
+  mutate(
+    j = map_chr(j, ~LETTERS[.+1])
+  ) %>%
+  ggplot(aes(j, array, fill=factor(cl_dim), group=paste(arg, cl_dim))) +
+  geom_line(position='dodge') +
+  facet_grid(seed~arg)
+```
+
+```{r}
+clusters %>%
+  filter(seed==0, n_clusters==1, scaling==1e-16, weight_structure=='symmetric', sign==1) %>%
+  mutate(array = array/2/sqrt(2)/n_clusters, cl_dim = dim0 %% n_clusters) %>%
+  mutate(
+    j = map_chr(j, ~LETTERS[.+1])
+  ) %>%
+  ggplot(aes(j, array, fill=factor(cl_dim), group=paste(arg, cl_dim))) +
+  geom_col(position='dodge') +
+  facet_grid(seed~arg)
+```
+
+
+```{r}
+clusters %>%
+  filter(seed==0, n_clusters==1, scaling==1e-16, weight_structure=='symmetric') %>%
+  mutate(array = array/2/sqrt(2)/n_clusters, cl_dim = dim0 %% n_clusters) %>%
+  mutate(
+    j = map_chr(j, ~LETTERS[.+1])
+  ) %>%
+  ggplot(aes(j, array, color=arg, group=arg)) +
+  geom_line() +
+  facet_grid(sign~cl_dim)
+```
+
+
+```{r}
+clusters %>%
+  filter(seed==0, n_clusters==3, scaling==1e-16, weight_structure=='dense') %>%
+  mutate(array = array/2/sqrt(2)/n_clusters, cl_dim = dim0 %% n_clusters) %>%
+  group_by(sign, cl_dim) %>%
+  nest() %>%
+  mutate(data = map(data, function(dat) {
+    expand.grid(j1=0:6, j2=0:6) %>%
+      inner_join(
+        dat %>%
+          filter(arg=='first') %>%
+          transmute(arr1=array, j1=j)
+      ) %>%
+      inner_join(
+        dat %>%
+          filter(arg == 'second') %>%
+          transmute(arr2=array, j2=j)
+      ) %>%
+      mutate(
+        value = arr1+arr2,
+        value = if_else(value>=0, value, 0)
+      ) %>%
+      select(j1, j2, value)
+  })) %>%
+  unnest() %>%
+  mutate(
+    value = sign(j2-j1)*sign*value,
+    label = map2_chr(j1, j2, ~paste0(LETTERS[..1+1], LETTERS[..2+1])),
+    symbolic_distance=(j1-j2),
+    order = sign(j2-j1),
+    j1 = map_chr(j1, ~LETTERS[.+1]),
+    j2 = map_chr(j2, ~LETTERS[.+1])
+  ) %>%
+  filter(symbolic_distance != 0) %>%
+  ggplot(aes(label, value, group=cl_dim, color=factor(cl_dim))) +
+  geom_line() +
+  facet_grid(sign~symbolic_distance, scales='free_x', space = 'free_x')
+```
+
+
+```{r}
+clusters %>%
+  filter(seed==0, n_clusters==3, scaling==1e-16, weight_structure=='dense') %>%
+  mutate(array = array/2/sqrt(2)/n_clusters, cl_dim = dim0 %% n_clusters) %>%
+  group_by(sign, cl_dim) %>%
+  nest() %>%
+  mutate(data = map(data, function(dat) {
+    expand.grid(j1=0:6, j2=0:6) %>%
+      inner_join(
+        dat %>%
+          filter(arg=='first') %>%
+          transmute(arr1=array, j1=j)
+      ) %>%
+      inner_join(
+        dat %>%
+          filter(arg == 'second') %>%
+          transmute(arr2=array, j2=j)
+      ) %>%
+      mutate(
+        value = arr1+arr2,
+        value = if_else(value>=0, value, 0)
+      ) %>%
+      select(j1, j2, value)
+  })) %>%
+  unnest() %>%
+  mutate(
+    value = sign*value,
+    label = map2_chr(j1, j2, ~paste0(min(LETTERS[..1+1],LETTERS[..2+1]), max(LETTERS[..1+1], LETTERS[..2+1]))),
+    symbolic_distance=abs(j2-j1),
+    j1 = map_chr(j1, ~LETTERS[.+1]),
+    j2 = map_chr(j2, ~LETTERS[.+1])
+  ) %>%
+  ggplot(aes(j1, j2, fill = value)) +
+  geom_tile() +
+  facet_grid(sign~cl_dim) +
+  scico::scale_fill_scico(palette='vik')
+```
+
+
+```{r}
+design <- "1255\n3455\n6667"
+fig_1 <-
+  ((wrap_elements(grid::textGrob('Network'))+theme_princti()) + fig_error + fig_margin + fig_acc + fig_gen) +
+  plot_layout(guides = 'keep', design = '125\n345', widths = c(1,1,2.5))
+fig <-
+  ((fig_1/(
+    fig_g + fig_h + (wrap_elements(grid::textGrob('O-network'))+theme_princti()) + (wrap_elements(grid::textGrob('R-network'))+theme_princti()) + fig_k + plot_layout(nrow=1)
+  )) +
+  plot_layout(heights = c(2,0.8)) +
+  plot_annotation(tag_levels = 'a')) &
+  theme(
+    legend.key.size = unit(4, 'pt'),
+    plot.margin = unit(c(0,0,0,0), 'pt'),
+    legend.box.margin = unit(c(0,0,0,0), 'pt'),
+    legend.box.spacing=unit(0, 'pt')
+  )
+frac <- 0.95
+width <- 15.11078
+fig
+ggsave('../figures/fig-rich/fig-rich-raw.pdf', width=frac*width, height=(3*0.8*1.5)/7*frac*width, units = "cm")
 ```
